@@ -78,7 +78,8 @@ class BaseProvider(ABC):
         context: str,
         catalog_name: str,
         schema_name: str = "",
-        table_name: str = "",
+        object_name: str = "",
+        object_type: str = "table",
         start_time: datetime = None,
     ) -> RunResult:
         """
@@ -89,14 +90,15 @@ class BaseProvider(ABC):
             context: Context description (e.g., "processing table", "processing schema")
             catalog_name: Catalog name
             schema_name: Schema name (optional)
-            table_name: Table name (optional)
+            object_name: Object name (optional)
+            object_type: Object type (optional)
             start_time: Operation start time
 
         Returns:
             RunResult with failed status
         """
         if isinstance(e, (FuturesTimeoutError, TimeoutError)):
-            error_msg = f"Timeout {context} {catalog_name}.{schema_name}.{table_name} after {self.timeout_seconds}s"
+            error_msg = f"Timeout {context} {catalog_name}.{schema_name}.{object_name} after {self.timeout_seconds}s"
             self.logger.error(error_msg)
         elif isinstance(
             e,
@@ -109,14 +111,14 @@ class BaseProvider(ABC):
                 ReconciliationError,
             ),
         ):
-            error_msg = f"Failed to {context} {catalog_name}.{schema_name}.{table_name}: {str(e)}"
+            error_msg = f"Failed to {context} {catalog_name}.{schema_name}.{object_name}: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
         else:
-            error_msg = f"Unexpected error {context} {catalog_name}.{schema_name}.{table_name}: {str(e)}"
+            error_msg = f"Unexpected error {context} {catalog_name}.{schema_name}.{object_name}: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
 
         return self._create_failed_result(
-            catalog_name, schema_name, table_name, error_msg, start_time
+            catalog_name, schema_name, object_name, object_type, error_msg, start_time
         )
 
     @abstractmethod
@@ -198,7 +200,10 @@ class BaseProvider(ABC):
                 e,
                 f"{self.get_operation_name()} catalog",
                 self.catalog_config.catalog_name,
-                start_time=start_time,
+                "",
+                "",
+                "catalog",
+                start_time,
             )
             results.append(result)
 
@@ -272,6 +277,7 @@ class BaseProvider(ABC):
                             catalog_name,
                             schema_name,
                             table_name,
+                            "table",
                             start_time,
                         )
                         results.append(result)
@@ -282,7 +288,9 @@ class BaseProvider(ABC):
                 "processing schema",
                 catalog_name,
                 schema_name,
-                start_time=start_time,
+                "",
+                "schema",
+                start_time,
             )
             results.append(result)
 
@@ -292,7 +300,8 @@ class BaseProvider(ABC):
         self,
         catalog_name: str,
         schema_name: str,
-        table_name: Optional[str] = None,
+        object_name: Optional[str] = None,
+        object_type: Optional[str] = None,
         error_msg: str = "",
         start_time: Optional[datetime] = None,
     ) -> RunResult:
@@ -302,7 +311,8 @@ class BaseProvider(ABC):
         Args:
             catalog_name: Catalog name
             schema_name: Schema name
-            table_name: Optional table name
+            object_name: Optional object name
+            object_type: Optional object type
             error_msg: Error message
             start_time: Operation start time
 
@@ -316,7 +326,8 @@ class BaseProvider(ABC):
             operation_type=self.get_operation_name(),
             catalog_name=catalog_name,
             schema_name=schema_name,
-            table_name=table_name,
+            object_name=object_name,
+            object_type=object_type,
             status="failed",
             start_time=start_time.isoformat(),
             end_time=datetime.now(timezone.utc).isoformat(),

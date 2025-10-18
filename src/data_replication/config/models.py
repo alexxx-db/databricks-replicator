@@ -373,7 +373,8 @@ class RunResult(BaseModel):
     operation_type: str
     catalog_name: str
     schema_name: Optional[str] = None
-    table_name: Optional[str] = None
+    object_name: Optional[str] = None
+    object_type: Optional[str] = None
     status: str  # success, failed
     start_time: str
     end_time: str
@@ -388,8 +389,8 @@ class RunResult(BaseModel):
         """Convert catalog name to lowercase."""
         return v.lower() if v else v
 
-    @field_validator("schema_name", "table_name")
+    @field_validator("schema_name", "object_name")
     @classmethod
     def validate_names(cls, v):
-        """Convert schema and table names to lowercase."""
+        """Convert schema and object names to lowercase."""
         return v.lower() if v else v

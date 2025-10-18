@@ -21,41 +21,6 @@ from .base_provider import BaseProvider
 class ReconciliationProvider(BaseProvider):
     """Provider for reconciliation operations between source and target tables."""
 
-    def __init__(
-        self,
-        spark: DatabricksSession,
-        logger: DataReplicationLogger,
-        db_ops: DatabricksOperations,
-        run_id: str,
-        catalog_config: TargetCatalogConfig,
-        retry: RetryConfig = None,
-        max_workers: int = 2,
-        timeout_seconds: int = 1800,
-    ):
-        """
-        Initialize the reconciliation provider.
-
-        Args:
-            spark: Spark session for target databricks workspace
-            logger: Logger instance for audit logging
-            db_ops: Databricks operations helper
-            run_id: Unique run identifier
-            catalog_config: Target catalog configuration containing reconciliation config
-            retry: Retry configuration
-            max_workers: Maximum number of concurrent workers
-            timeout_seconds: Timeout for operations
-        """
-        super().__init__(
-            spark,
-            logger,
-            db_ops,
-            run_id,
-            catalog_config,
-            retry,
-            max_workers,
-            timeout_seconds,
-        )
-
     def get_operation_name(self) -> str:
         """Get the name of the operation for logging purposes."""
         return "reconciliation"
@@ -332,7 +297,8 @@ class ReconciliationProvider(BaseProvider):
                     operation_type="reconciliation",
                     catalog_name=target_catalog,
                     schema_name=schema_name,
-                    table_name=table_name,
+                    object_name=table_name,
+                    object_type="table",
                     status="success",
                     start_time=start_time.isoformat(),
                     end_time=end_time.isoformat(),
@@ -384,7 +350,8 @@ class ReconciliationProvider(BaseProvider):
                     operation_type="reconciliation",
                     catalog_name=target_catalog,
                     schema_name=schema_name,
-                    table_name=table_name,
+                    object_name=table_name,
+                    object_type="table",
                     status="failed",
                     start_time=start_time.isoformat(),
                     end_time=end_time.isoformat(),

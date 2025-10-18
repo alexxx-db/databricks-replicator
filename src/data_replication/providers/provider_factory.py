@@ -173,7 +173,7 @@ class ProviderFactory:
 
             # Log to standard logger
             table_info = (
-                f"{result.catalog_name}.{result.schema_name}.{result.table_name}"
+                f"{result.catalog_name}.{result.schema_name}.{result.object_name}"
             )
             self.logger.info(
                 f"Operation {result.operation_type} {result.status} for {table_info}"
@@ -186,7 +186,8 @@ class ProviderFactory:
                         operation_type=result.operation_type,
                         catalog_name=result.catalog_name,
                         schema_name=result.schema_name or "",
-                        table_name=result.table_name or "",
+                        object_name=result.object_name or "",
+                        object_type=result.object_type or "",
                         status=result.status,
                         start_time=start_dt,
                         end_time=end_dt,
@@ -248,10 +249,10 @@ class ProviderFactory:
         schemas = set(
             f"{r.catalog_name}.{r.schema_name}" for r in results if r.schema_name
         )
-        tables = set(
-            f"{r.catalog_name}.{r.schema_name}.{r.table_name}"
+        objects = set(
+            f"{r.catalog_name}.{r.schema_name}.{r.object_name}"
             for r in results
-            if r.table_name
+            if r.object_name
         )
 
         success_rate = (
@@ -262,7 +263,7 @@ class ProviderFactory:
         summary_text = (
             f"{operation_type.title()} operation completed in {duration:.1f}s. "
             f"Processed {len(catalogs)} catalogs, {len(schemas)} schemas, "
-            f"{len(tables)} tables. Success rate: {successful_operations}/"
+            f"{len(objects)} objects. Success rate: {successful_operations}/"
             f"{total_operations} ({success_rate:.1f}%)"
         )
 
@@ -274,7 +275,7 @@ class ProviderFactory:
             status=status,
             total_catalogs=len(catalogs),
             total_schemas=len(schemas),
-            total_tables=len(tables),
+            total_tables=len(objects),
             successful_operations=successful_operations,
             failed_operations=failed_operations,
             summary=summary_text,
@@ -323,7 +324,8 @@ class ProviderFactory:
                         operation_type=f"{operation_type}_summary",
                         catalog_name="ALL",
                         schema_name="ALL",
-                        table_name="ALL",
+                        object_name="ALL",
+                        object_type="ALL",
                         status=summary.status,
                         start_time=start_dt,
                         end_time=end_dt,

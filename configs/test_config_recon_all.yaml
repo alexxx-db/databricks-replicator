@@ -24,7 +24,7 @@ audit_config:
 target_catalogs:
   - catalog_name: "aaron"
     table_types:
-      ["streaming_table", "managed", "external", "view", "materialized_view"]
+      ["streaming_table", "managed", "external"]
     backup_config:
       enabled: false
     replication_config:

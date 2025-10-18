@@ -90,7 +90,8 @@ class AuditLogger:
             operation_type STRING,
             catalog_name STRING,
             schema_name STRING,
-            table_name STRING,
+            object_name STRING,
+            object_type STRING,
             status STRING,
             start_time TIMESTAMP,
             end_time TIMESTAMP,
@@ -111,7 +112,8 @@ class AuditLogger:
         operation_type: str,
         catalog_name: str,
         schema_name: str,
-        table_name: str,
+        object_name: str,
+        object_type: str,
         status: str,
         start_time: datetime,
         end_time: datetime,
@@ -128,7 +130,8 @@ class AuditLogger:
             operation_type: Type of operation (backup, restore, etc.)
             catalog_name: Catalog name
             schema_name: Schema name
-            table_name: Table name
+            object_name: Object name (table, view, etc.)
+            object_type: Type of object (table, view, etc.)
             status: Operation status
             start_time: Operation start time
             end_time: Operation end time
@@ -145,7 +148,8 @@ class AuditLogger:
                 operation_type,
                 catalog_name,
                 schema_name,
-                table_name,
+                object_name,
+                object_type,
                 status,
                 start_time,
                 end_time,
@@ -167,7 +171,8 @@ class AuditLogger:
                 StructField("operation_type", StringType(), True),
                 StructField("catalog_name", StringType(), True),
                 StructField("schema_name", StringType(), True),
-                StructField("table_name", StringType(), True),
+                StructField("object_name", StringType(), True),
+                StructField("object_type", StringType(), True),
                 StructField("status", StringType(), True),
                 StructField("start_time", TimestampType(), True),
                 StructField("end_time", TimestampType(), True),
