@@ -1,6 +1,8 @@
 # Data Replication System for Databricks
 
-A comprehensive data replication system for Databricks with support for delta share setup, export, replication, and reconciliation of data across different cloud and metastores.
+A Python plug-in solution to replicate data between Databricks envs. Support and accelerate workloads in multi-cloud migration, single-cloud migration, workspace migration, DR, backup and recovery, multi-cloud data mesh.
+
+Cloud agnostic - cross cloud, cross region
 
 ## Overview
 
