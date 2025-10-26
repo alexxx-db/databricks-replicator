@@ -9,7 +9,7 @@ Cloud agnostic - cross cloud, cross region
 This system provides incremental data replication capabilities between Databricks metastores with D2D Delta Share, with specialized handling for Streaming Tables. It supports multiple operation types that can be run independently or together:
 
 - **Backup**: Export Streaming Table backing tables and add tables to Share
-- **Replication**: Cross-metastore incremental table replication with schema enforcement
+- **Replication**: Cross-metastore/same metastore incremental table replication with schema enforcement
 - **Reconciliation**: Data validation with row counts, schema checks, and missing data detection
 
 ## Supported Object Types
@@ -23,6 +23,9 @@ This system provides incremental data replication capabilities between Databrick
 - Materialized Views
 
 ## Key Features
+
+### Delta Sharing
+Option to let the tool setup Delta share automatically for you, i.e. Recipient, Shares and Shared Catalogs. Or use your existing Delta share configs
 
 ### Incremental Data Replication
 The system leverages Deep Clone for incrementality
@@ -48,7 +51,7 @@ The system automatically handles Streaming Tables complexities:
 ## Installation
 
 ### Prerequisites
-- Cloud Token based D2D Delta Sharing (DS) Enabled, i.e. Source as DS Provider, Target as DS Recipient
+- Enable Delta Sharing (DS) across clouds. https://docs.databricks.com/aws/en/delta-sharing/set-up#gsc.tab=0
 - Source and target Service Principal with metastore admin and workspace admin access
 - SP OAuth Token stored in Databricks secrets created if executed outside Databricks
 - For Streaming Table replication, tables need to already exist in target DBX
