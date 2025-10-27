@@ -184,7 +184,7 @@ def main():
         help="Only validate configuration without running operations",
     )
 
-    parser.add_argument("--run-id", action="store_true", help="Unique Run ID")
+    parser.add_argument("--run-id", type=str, help="Unique Run ID")
 
     parser.add_argument(
         "--target-catalog",
