@@ -156,7 +156,7 @@ def run_backup_only(
     backup_factory = ProviderFactory(
         "backup", config, spark, logging_spark, logger, run_id
     )
-    logger.info(f"Backup operations in {config.execute_at.value} environment")
+    # logger.info(f"Backup operations in {config.execute_at.value} environment")
     summary = backup_factory.run_backup_operations()
 
     if summary.failed_operations > 0:
@@ -355,6 +355,8 @@ def main():
                 if config.execute_at == "source":
                     logging_host = source_host
                     logging_token = source_token
+
+                logger.info(f"Logging backup operations to {logging_host}")
 
                 run_backup_only(
                     config,

@@ -26,26 +26,24 @@ target_databricks_connect_config:
     secret_key: "pat_target"
 
 external_location_mapping:
-  "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/aaboode/"
+  "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/aaron2"
 
 audit_config:
-  audit_table: "aaron.audit.audit_logging"
+  audit_table: "data_replication.audit.audit_logging"
+  create_audit_catalog: true
 
 target_catalogs:
   - catalog_name: "aaron"
     table_types: ["external", "managed"]
     target_schemas:
-      - schema_name: "default"
-        tables:
-          - table_name: "external_table_example"
       - schema_name: "bronze_1"
     backup_config:
       enabled: true
-      create_backup_catalog: true
       create_recipient: true
       create_share: true
     replication_config:
       enabled: true
+      create_target_catalog: true
       create_shared_catalog: true
     reconciliation_config:
       enabled: true

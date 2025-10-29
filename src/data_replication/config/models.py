@@ -91,14 +91,13 @@ class BackupConfig(BaseModel):
     backup_catalog: Optional[str] = None
     backup_catalog_location: Optional[str] = None
     backup_share_name: Optional[str] = None
+    backup_schema_prefix: Optional[str] = None
 
     @field_validator("source_catalog", "backup_catalog")
     @classmethod
     def validate_catalog_names(cls, v):
         """Convert catalog names to lowercase."""
         return v.lower() if v else v
-
-
 class ReplicationConfig(BaseModel):
     """Configuration for replication operations."""
 

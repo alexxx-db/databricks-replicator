@@ -89,6 +89,8 @@ target_catalogs:
       backup_catalog: "__replication_internal_catalog_example_to_aws"
       # Optional: backup catalog location. default is None.
       backup_catalog_location: null
+      # Optional: prefix for backup schema names. default is None.
+      backup_schema_prefix: null
       # Optional: share name. default to <backup_catalog>_share
       backup_share_name: "__replication_internal_catalog_example_to_aws_share"
     # Optional: replication configuration
