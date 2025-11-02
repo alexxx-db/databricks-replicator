@@ -329,11 +329,18 @@ def main():
                 config.target_databricks_connect_config.token.secret_scope,
                 config.target_databricks_connect_config.token.secret_key,
             )
-
+        logger.info(f"Config: {config}")
+        logger.info(
+            f"Source Host: {source_host if source_host else 'Not Configured'}"
+        )
+        logger.info(
+            f"Target Host: {target_host if target_host else 'Not Configured'}"
+        )
+        logger.info(f"Source Metastore: {config.source_databricks_connect_config.sharing_identifier}")
+        logger.info(f"Target Metastore: {config.target_databricks_connect_config.sharing_identifier}")
         logger.info(
             f"Log run_id {run_id} in {config.audit_config.audit_table if config.audit_config and config.audit_config.audit_table else 'No audit table configured'}"
         )
-
         logger.info(f"All Operations Begins {'-' * 60}")
 
         if args.operation in ["all", "backup"]:

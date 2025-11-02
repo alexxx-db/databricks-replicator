@@ -2,7 +2,7 @@
 
 A Python plug-in solution to replicate data between Databricks envs. Support and accelerate workloads in multi-cloud migration, single-cloud migration, workspace migration, DR, backup and recovery, multi-cloud data mesh.
 
-Cloud agnostic - cross cloud, cross region
+Cloud agnostic - cross metastore or same metastore replication
 
 ## Overview
 

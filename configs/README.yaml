@@ -132,7 +132,7 @@ reconciliation_config:
   # Optional: enable missing data checks if row count check passes
   missing_data_check: true
 
-# Mandatory: target catalog configurations list
+# Optional: target catalog configurations list
 target_catalogs:
   # Mandatory: target catalog name
   - catalog_name: "catalog_example"
