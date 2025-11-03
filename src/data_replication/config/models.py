@@ -65,6 +65,7 @@ class DatabricksConnectConfig(BaseModel):
     sharing_identifier: str
     host: Optional[str] = None
     token: Optional[SecretConfig] = None
+    cluster_id: Optional[str] = None
 
 
 class TableConfig(BaseModel):

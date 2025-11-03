@@ -147,12 +147,14 @@ def run_backup_only(
     run_id: str,
     source_host: str,
     source_token: str,
+    source_cluster_id: str,
     logging_host: str,
     logging_token: str,
+    logging_cluster_id: str,
 ) -> int:
     """Run only backup operations."""
-    spark = create_spark_session(source_host, source_token)
-    logging_spark = create_spark_session(logging_host, logging_token)
+    spark = create_spark_session(source_host, source_token, source_cluster_id)
+    logging_spark = create_spark_session(logging_host, logging_token, logging_cluster_id)
     backup_factory = ProviderFactory(
         "backup", config, spark, logging_spark, logger, run_id
     )
@@ -168,10 +170,10 @@ def run_backup_only(
 
 
 def run_replication_only(
-    config, logger, run_id: str, target_host: str, target_token: str
+    config, logger, run_id: str, target_host: str, target_token: str, target_cluster_id: str
 ) -> int:
     """Run only replication operations."""
-    spark = create_spark_session(target_host, target_token)
+    spark = create_spark_session(target_host, target_token, target_cluster_id)
 
     replication_factory = ProviderFactory(
         "replication", config, spark, spark, logger, run_id
@@ -188,10 +190,10 @@ def run_replication_only(
 
 
 def run_reconciliation_only(
-    config, logger, run_id: str, target_host: str, target_token: str
+    config, logger, run_id: str, target_host: str, target_token: str, target_cluster_id: str
 ) -> int:
     """Run only reconciliation operations."""
-    spark = create_spark_session(target_host, target_token)
+    spark = create_spark_session(target_host, target_token, target_cluster_id)
 
     reconciliation_factory = ProviderFactory(
         "reconciliation", config, spark, spark, logger, run_id
@@ -308,8 +310,10 @@ def main():
         # Note: In production, tokens should be retrieved from Databricks secrets
         source_host = None
         source_token = None
+        source_cluster_id = config.source_databricks_connect_config.cluster_id
         target_host = None
         target_token = None
+        target_cluster_id = config.target_databricks_connect_config.cluster_id
 
         if (
             config.source_databricks_connect_config.host
@@ -329,7 +333,7 @@ def main():
                 config.target_databricks_connect_config.token.secret_scope,
                 config.target_databricks_connect_config.token.secret_key,
             )
-        logger.info(f"Config: {config}")
+        logger.debug(f"Config: {config}")
         logger.info(
             f"Source Host: {source_host if source_host else 'Not Configured'}"
         )
@@ -359,9 +363,11 @@ def main():
 
                 logging_host = target_host
                 logging_token = target_token
+                logging_cluster_id = target_cluster_id
                 if config.execute_at == "source":
                     logging_host = source_host
                     logging_token = source_token
+                    logging_cluster_id = source_cluster_id
 
                 logger.info(f"Logging backup operations to {logging_host}")
 
@@ -371,8 +377,10 @@ def main():
                     run_id,
                     source_host,
                     source_token,
+                    source_cluster_id,
                     logging_host,
                     logging_token,
+                    logging_cluster_id,
                 )
                 logger.info(f"Backup Ends {'-' * 60}")
             elif args.operation == "backup":
@@ -395,7 +403,7 @@ def main():
                     f"Running replication operations for {len(replication_catalogs)} catalogs"
                 )
 
-                run_replication_only(config, logger, run_id, target_host, target_token)
+                run_replication_only(config, logger, run_id, target_host, target_token, target_cluster_id)
                 logger.info(f"Replication Ends {'-' * 60}")
             elif args.operation == "replication":
                 logger.info(
@@ -417,7 +425,7 @@ def main():
                 )
 
                 run_reconciliation_only(
-                    config, logger, run_id, target_host, target_token
+                    config, logger, run_id, target_host, target_token, target_cluster_id
                 )
                 logger.info(f"Reconciliation Ends {'-' * 60}")
             elif args.operation == "reconciliation":

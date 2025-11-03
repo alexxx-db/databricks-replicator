@@ -17,6 +17,8 @@ source_databricks_connect_config:
   token:
     secret_scope: "my_secret_scope"
     secret_key: "azure_pat"
+  # Optional: Source cluster ID. default is null to use serverless endpoint.
+  cluster_id: null
 
 # Mandatory: Target Databricks details
 target_databricks_connect_config:
@@ -29,6 +31,8 @@ target_databricks_connect_config:
   token:
     secret_scope: "my_secret_scope"
     secret_key: "aws_pat"
+  # Optional: Source cluster ID. default is null to use serverless endpoint.
+  cluster_id: null    
 
 # Mandatory: Audit logging configuration
 audit_config:
@@ -80,8 +84,8 @@ backup_config:
 replication_config:
   # Mandatory at replication group level or catalog level: whether to replicate catalog.
   enabled: true
-  # Optional: whether to create the catalog if it does not exist on target.default is false.
-  create_target_catalog: false
+  # Optional: whether to replicate the catalog if it does not exist on target.default is false.
+  replicate_target_catalog: false
   # Optional: target catalog location. default is None.
   target_catalog_location: null
   # Optional: whether to create the shared catalog. default is false.
@@ -100,6 +104,10 @@ replication_config:
   intermediate_catalog_location: null
   # Optional: whether to enforce schema during replication. default is true.
   enforce_schema: true
+  # Optional: whether to replicate the schema if it does not exist on target. default is false.
+  replicate_target_schema: false
+  # Optional: target schema location. default is None.
+  target_schema_location: null
 
 # Optional: reconciliation configuration (at replication group level)
 reconciliation_config:
