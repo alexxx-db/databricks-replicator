@@ -418,14 +418,7 @@ class ProviderFactory:
         """
         results = []
         operation_name = self.get_operation_name()
-        max_workers = (
-            self.config.concurrency.max_workers if self.config.concurrency else 2
-        )
-
-        self.logger.info(
-            f"Running {operation_name} with {max_workers} concurrent workers per schema"
-        )
-
+        
         # Process catalogs sequentially, but use concurrency within each schema
         for catalog in catalogs:
             try:

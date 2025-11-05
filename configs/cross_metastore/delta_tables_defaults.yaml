@@ -1,7 +1,8 @@
 # 1. Create delta share infrastructure in this tool including recipient, shares and shared catalogs with default system generated names.
-# 2. Enable backup with default system generated backup catalog and share names.
-# 3. Enable replication with default system generated shared catalog
-# 4. Enable reconciliation with default system generated shared catalog
+# 2. Add source schema to share.
+# 3. Deep clone delta table into target delta table.
+# 4. Reconciliate data between source and target delta table.
+# 5. For external tables, use external location mapping specified below
 
 version: "1.0"
 
@@ -38,6 +39,7 @@ backup_config:
   create_share: true
 replication_config:
   enabled: true
+  create_target_catalog: true
   create_shared_catalog: true
 reconciliation_config:
   enabled: true
