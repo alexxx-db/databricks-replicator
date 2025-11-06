@@ -45,6 +45,7 @@ class AuditConfig(BaseModel):
     """Configuration for audit tables"""
 
     audit_table: str
+    logging_workspace: ExecuteAt = ExecuteAt.TARGET
     create_audit_catalog: Optional[bool] = False
     audit_catalog_location: Optional[str] = None
 
@@ -260,7 +261,6 @@ class ReplicationSystemConfig(BaseModel):
 
     version: str
     replication_group: str
-    execute_at: ExecuteAt = Field(default=ExecuteAt.TARGET)
     source_databricks_connect_config: DatabricksConnectConfig
     target_databricks_connect_config: DatabricksConnectConfig
     audit_config: AuditConfig

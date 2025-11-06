@@ -3,17 +3,15 @@ version: "1.0"
 # Mandatory: Replication group name - identifier for the replication job
 replication_group: "readme_example_group"
 
-# Optional: where the replication job is executed ("source", "target", "external"), default is "target"
-execute_at: "target"
-
 # Mandatory: Source Databricks details
 source_databricks_connect_config:
   # Mandatory: source name identifier
   name: "azure"
   # Mandatory: source sharing identifier
   sharing_identifier: "azure:eastus2:b86c6879-8c55-4e70-a585-18d16a4fa6e9"
-  # Mandatory if execute_at is "target" or "external": Source Databricks Connect configuration
+  # Mandatory: Source Databricks workspace url
   host: "https://adb-984752964297111.11.azuredatabricks.net/"
+  # Optional: Source Databricks personal access token secret details.
   token:
     secret_scope: "my_secret_scope"
     secret_key: "azure_pat"
@@ -26,8 +24,9 @@ target_databricks_connect_config:
   name: "aws"
   # Mandatory: target sharing identifier
   sharing_identifier: "aws:us-west-2:b169b504-4c54-49f2-bc3a-adf4b128f36d"
-  # Mandatory if execute_at is "source" or "external": Target Databricks Connect configuration
+  # Mandatory: Target Databricks workspace url
   host: "https://e2-demo-field-eng.cloud.databricks.com/"
+  # Optional: Target Databricks personal access token secret details.
   token:
     secret_scope: "my_secret_scope"
     secret_key: "aws_pat"
@@ -38,6 +37,8 @@ target_databricks_connect_config:
 audit_config:
   # Mandatory: audit table full name
   audit_table: "data_replication.audit.logging"
+  # Mandatory: if logged at source or target. default to target
+  logging_workspace: "target"
   # Optional: whether to create audit catalog if it does not exist. default is false.
   create_audit_catalog: false
   # Optional: audit catalog location. default is None.
