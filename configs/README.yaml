@@ -48,7 +48,8 @@ audit_config:
 external_location_mapping:
 "abfss://test@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/test/"
 
-# Optional at replication group level or catalog level:
+# At least one of uc_object_types, table_types, volume_types must be provided.
+# Optional at replication group level or catalog level. can be overriden by args
 # when table_tag or column tag is included in uc_object_types, table_types must be provided.
 # when volume_tag is included in uc_object_types, volume_types must be provided.
 # when view_tag is included in uc_object_types, table_types must include view.
@@ -65,12 +66,12 @@ uc_object_types:
     "column_tag",
   ]
 
-# Optional at replication group level or catalog level:
+# Optional at replication group level or catalog level. can be overriden by args
 # supported types: streaming_table, managed, external, view.
 # streaming table can not be backed up and replicate with other table types together.
 table_types: ["streaming_table"]
 
-# Optional at replication group level or catalog level:
+# Optional at replication group level or catalog level. can be overriden by args
 # supported volume types: managed, external.
 volume_types: ["managed", "external"]
 
@@ -168,7 +169,7 @@ reconciliation_config:
   # Optional: enable missing data checks if row count check passes
   missing_data_check: true
 
-# Optional: target catalog configurations list
+# Optional: target catalog configurations list. can be overriden by args
 target_catalogs:
   # Mandatory: target catalog name
   - catalog_name: "catalog_example"
@@ -179,13 +180,13 @@ target_catalogs:
     # Note: external volumes require external_location_mapping configuration above
     # supported volume types: managed, external.
     volume_types: ["managed", "external"]
-    # Optional: target_schema list. target_schemas takes precedence over schema_filter_expression.
+    # Optional: target_schema list. target_schemas takes precedence over schema_filter_expression. can be overriden by args
     target_schemas:
       # Optional: target schema name list. if not provided, all schemas are included based on schema_filter_expression or all schemas in catalog.
       # config schema_filter_expression and target_schemas at the same time not allowed.
       - schema_name: "bonze_1"
       - schema_name: "bonze_2"
-        # Optional: include specific tables in the schema. if not provided, all tables are included.
+        # Optional: include specific tables in the schema. if not provided, all tables are included. can be overriden by args
         tables:
           - table_name: "product_metrics"
           - table_name: "sales_data"
@@ -220,7 +221,7 @@ target_catalogs:
 
 # Optional: Concurrency settings
 concurrency:
-  # Optional: maximum number of concurrent tasks. default is 4.
+  # Optional: maximum number of concurrent tasks. default is 4. can be overridden by args
   max_workers: 4
   # Optional: timeout for each task. default is 3600.
   timeout_seconds: 3600

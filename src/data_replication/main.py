@@ -38,6 +38,7 @@ from databricks.sdk import WorkspaceClient
 
 from data_replication.audit.logger import DataReplicationLogger
 from data_replication.config.loader import ConfigLoader
+from data_replication.config.models import TableType, VolumeType, UCObjectType
 from data_replication.exceptions import ConfigurationError
 from data_replication.providers.provider_factory import ProviderFactory
 from data_replication.utils import (
@@ -53,6 +54,42 @@ def create_logger(config) -> DataReplicationLogger:
     if hasattr(config, "logging") and config.logging:
         logger.setup_logging(config.logging)
     return logger
+
+
+def parse_comma_delimited_enums(value: str, enum_class, arg_name: str):
+    """
+    Parse comma-delimited string into list of enum values.
+    
+    Args:
+        value: Comma-delimited string
+        enum_class: Enum class to validate against
+        arg_name: Argument name for error messages
+        
+    Returns:
+        List of enum values
+        
+    Raises:
+        ValueError: If any value is not valid for the enum
+    """
+    if not value:
+        return None
+        
+    items = [item.strip() for item in value.split(",")]
+    items = [item for item in items if item]  # Filter empty strings
+    
+    result = []
+    for item in items:
+        try:
+            # Try to create enum value
+            result.append(enum_class(item))
+        except ValueError:
+            valid_values = [e.value for e in enum_class]
+            raise ValueError(
+                f"Invalid value '{item}' for {arg_name}. "
+                f"Valid values are: {', '.join(valid_values)}"
+            )
+    
+    return result
 
 
 def validate_args(args) -> None:
@@ -261,6 +298,24 @@ def setup_argument_parser():
         help="maximum number of concurrent tasks, default is 4",
     )
 
+    parser.add_argument(
+        "--uc-object-types",
+        type=str,
+        help="comma-separated list of UC metadata types to replicate. Acceptable values: catalog,catalog_tag,schema,schema_tag,view_tag,table_tag,column_tag,volume,volume_tag",
+    )
+
+    parser.add_argument(
+        "--table-types",
+        type=str,
+        help="comma-separated list of table types to process. Acceptable values: managed,external,streaming_table",
+    )
+
+    parser.add_argument(
+        "--volume-types",
+        type=str,
+        help="comma-separated list of volume types to process. Acceptable values: managed,external",
+    )
+
     return parser
 
 
@@ -286,6 +341,17 @@ def main():
         return 1
 
     try:
+        # Parse the enum override arguments  
+        uc_object_types_override = parse_comma_delimited_enums(
+            args.uc_object_types, UCObjectType, "--uc-object-types"
+        )
+        table_types_override = parse_comma_delimited_enums(
+            args.table_types, TableType, "--table-types"
+        )
+        volume_types_override = parse_comma_delimited_enums(
+            args.volume_types, VolumeType, "--volume-types"
+        )
+        
         # Load and validate configuration
         config = ConfigLoader.load_from_file(
             config_path=config_path,
@@ -293,6 +359,9 @@ def main():
             target_schemas_override=args.target_schemas,
             target_tables_override=args.target_tables,
             concurrency_override=args.concurrency,
+            uc_object_types_override=uc_object_types_override,
+            table_types_override=table_types_override,
+            volume_types_override=volume_types_override,
         )
         logger = create_logger(config)
 

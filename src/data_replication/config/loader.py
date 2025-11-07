@@ -16,6 +16,9 @@ from data_replication.config.models import (
     SchemaConfig,
     ConcurrencyConfig,
     TableConfig,
+    UCObjectType,
+    TableType,
+    VolumeType,
 )
 
 
@@ -33,6 +36,9 @@ class ConfigLoader:
         target_schemas_override: str = None,
         target_tables_override: str = None,
         concurrency_override: int = None,
+        uc_object_types_override: list = None,
+        table_types_override: list = None,
+        volume_types_override: list = None,
     ) -> ReplicationSystemConfig:
         """
         Load and validate configuration from a YAML file.
@@ -45,6 +51,9 @@ class ConfigLoader:
             target_tables_override: Comma-separated string of table names
                 (e.g., "table1,table2")
             concurrency_override: integer containing concurrency configuration override
+            uc_object_types_override: List of UCObjectType enums to override in config
+            table_types_override: List of TableType enums to override in config
+            volume_types_override: List of VolumeType enums to override in config
 
         Returns:
             Validated ReplicationSystemConfig instance
@@ -67,6 +76,54 @@ class ConfigLoader:
 
         if config_data is None:
             raise ConfigurationError(f"Configuration file is empty: {config_path}")
+
+        # Handle uc_object_types override
+        if uc_object_types_override is not None:
+            try:
+                # Convert enum values to string values for serialization
+                uc_object_types_values = [
+                    obj_type.value for obj_type in uc_object_types_override
+                ]
+
+                # Apply override to system level
+                config_data["uc_object_types"] = uc_object_types_values
+
+            except Exception as e:
+                raise ConfigurationError(
+                    f"Invalid uc_object_types configuration: {e}"
+                ) from e
+
+        # Handle table_types override
+        if table_types_override is not None:
+            try:
+                # Convert enum values to string values for serialization
+                table_types_values = [
+                    table_type.value for table_type in table_types_override
+                ]
+
+                # Apply override to system level
+                config_data["table_types"] = table_types_values
+
+            except Exception as e:
+                raise ConfigurationError(
+                    f"Invalid table_types configuration: {e}"
+                ) from e
+
+        # Handle volume_types override
+        if volume_types_override is not None:
+            try:
+                # Convert enum values to string values for serialization
+                volume_types_values = [
+                    volume_type.value for volume_type in volume_types_override
+                ]
+
+                # Apply override to system level
+                config_data["volume_types"] = volume_types_values
+
+            except Exception as e:
+                raise ConfigurationError(
+                    f"Invalid volume_types configuration: {e}"
+                ) from e
 
         # Handle target_catalog override
         if target_catalog_override:
@@ -100,6 +157,14 @@ class ConfigLoader:
                     if "table_types" in config_data:
                         new_catalog["table_types"] = config_data["table_types"]
 
+                    # Inherit volume_types from replication group level
+                    if "volume_types" in config_data:
+                        new_catalog["volume_types"] = config_data["volume_types"]
+
+                    # Inherit uc_object_types from replication group level
+                    if "uc_object_types" in config_data:
+                        new_catalog["uc_object_types"] = config_data["uc_object_types"]
+
                     # Inherit backup_config from replication group level
                     if "backup_config" in config_data:
                         new_catalog["backup_config"] = config_data["backup_config"]
@@ -115,7 +180,6 @@ class ConfigLoader:
                         new_catalog["reconciliation_config"] = config_data[
                             "reconciliation_config"
                         ]
-
 
                     filtered_catalogs = [new_catalog]
 
