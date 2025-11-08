@@ -21,6 +21,7 @@ from pyspark.sql.types import (
 
 from data_replication.audit.logger import DataReplicationLogger
 from data_replication.databricks_operations import DatabricksOperations
+from data_replication.utils import get_spark_current_user
 
 
 class AuditLogger:
@@ -59,12 +60,7 @@ class AuditLogger:
         )
 
         # Get current execution user using Spark SQL
-        try:
-            self.execution_user = self.spark.sql("SELECT current_user() as user").collect()[
-                0
-            ]["user"]
-        except Exception:
-            self.execution_user = "unknown"
+        self.execution_user = get_spark_current_user(self.spark)
 
         # Create audit table during instantiation
         self._create_audit_table()
@@ -89,9 +85,7 @@ class AuditLogger:
                         audit_catalog, self.audit_catalog_location
                     )
                 except Exception as e:
-                    self.logger.error(
-                        f"Failed to create audit catalog {audit_catalog}"
-                    )
+                    self.logger.error(f"Failed to create audit catalog {audit_catalog}")
                     raise e
             self.db_ops.create_schema_if_not_exists(audit_catalog, audit_schema)
         else:
@@ -123,8 +117,8 @@ class AuditLogger:
             execution_user STRING
         ) USING DELTA
         """
+        self.logger.debug(f"Creating audit table with SQL: {create_table_sql}")
         self.spark.sql(create_table_sql)
-        self.logger.debug(f"Created/verified audit table: {self.audit_table}")
 
     def log_operation(
         self,

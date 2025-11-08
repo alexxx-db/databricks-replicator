@@ -7,7 +7,6 @@ streaming tables, materialized views, and intermediate catalogs.
 
 from datetime import datetime, timezone
 from typing import List
-from databricks.sdk import WorkspaceClient
 
 from data_replication.databricks_operations import DatabricksOperations
 
@@ -28,19 +27,28 @@ class ReplicationProvider(BaseProvider):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        source_host = self.source_databricks_config.host
-        source_secret_config = self.source_databricks_config.token
-        source_cluster_id = self.source_databricks_config.cluster_id
-        self.source_spark = create_spark_session(
-            host=source_host,
-            secret_config=source_secret_config,
-            cluster_id=source_cluster_id,
-            workspace_client=self.workspace_client,
-        )
-        validate_spark_session(
-            self.source_spark, get_workspace_url_from_host(source_host)
-        )
-        self.source_dbops = DatabricksOperations(self.source_spark)
+        # Setup source Spark session if uc_object_types is not empty or if create_shared_catalog is True but source_databricks_connect_config.sharing_identifier is not provided
+        if (
+            self.catalog_config.uc_object_types
+            and len(self.catalog_config.uc_object_types) > 0
+        ) or (
+            self.catalog_config.replication_config
+            and self.catalog_config.replication_config.create_shared_catalog
+            and not self.source_databricks_config.sharing_identifier
+        ):
+            source_host = self.source_databricks_config.host
+            source_secret_config = self.source_databricks_config.token
+            source_cluster_id = self.source_databricks_config.cluster_id
+            self.source_spark = create_spark_session(
+                host=source_host,
+                secret_config=source_secret_config,
+                cluster_id=source_cluster_id,
+                workspace_client=self.workspace_client,
+            )
+            validate_spark_session(
+                self.source_spark, get_workspace_url_from_host(source_host)
+            )
+            self.source_dbops = DatabricksOperations(self.source_spark, self.logger)
 
     def get_operation_name(self) -> str:
         """Get the name of the operation for logging purposes."""
@@ -56,23 +64,26 @@ class ReplicationProvider(BaseProvider):
     def process_table(self, schema_name: str, table_name: str) -> List[RunResult]:
         """Process a single table for replication."""
         results = []
-        if self.catalog_config.replication_config.replicate_data:
+        if self.catalog_config.table_types and len(self.catalog_config.table_types) > 0:
             result = self._replicate_table(schema_name, table_name)
             results.append(result)
 
-        if self.catalog_config.replication_config.replicate_uc:
-            if (
-                self.catalog_config.uc_object_types
-                and UCObjectType.TABLE_TAG in self.catalog_config.uc_object_types
+        if (
+            self.catalog_config.uc_object_types
+            and len(self.catalog_config.uc_object_types) > 0
+        ):
+            if self.catalog_config.uc_object_types and (
+                UCObjectType.TABLE_TAG in self.catalog_config.uc_object_types
+                or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
                 result = self._replicate_table_tags(
                     schema_name,
                     table_name,
                 )
                 results.append(result)
-            if (
-                self.catalog_config.uc_object_types
-                and UCObjectType.COLUMN_TAG in self.catalog_config.uc_object_types
+            if self.catalog_config.uc_object_types and (
+                UCObjectType.COLUMN_TAG in self.catalog_config.uc_object_types
+                or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
                 result = self._replicate_column_tags(
                     schema_name,
@@ -83,7 +94,13 @@ class ReplicationProvider(BaseProvider):
 
     def process_volume(self, schema_name: str, volume_name: str) -> RunResult:
         """Process a single volume for replication."""
-        return self._replicate_volume(schema_name, volume_name)
+        result = None
+        if (
+            self.catalog_config.volume_types
+            and len(self.catalog_config.volume_types) > 0
+        ):
+            result = self._replicate_volume(schema_name, volume_name)
+        return result
 
     def setup_operation_catalogs(self) -> str:
         """Setup replication-specific catalogs."""
@@ -111,8 +128,13 @@ class ReplicationProvider(BaseProvider):
 
         # Create source catalog from share if needed
         if replication_config.create_shared_catalog:
+            sharing_identifier = self.source_databricks_config.sharing_identifier
+            if not sharing_identifier:
+                sharing_identifier = (
+                    self.source_dbops.get_metastore_id()
+                )
             provider_name = self.db_ops.get_provider_name(
-                self.source_databricks_config.sharing_identifier
+                sharing_identifier
             )
             self.logger.info(
                 f"""Creating source catalog from share: {replication_config.source_catalog} using share name: {replication_config.share_name}"""
@@ -228,6 +250,10 @@ class ReplicationProvider(BaseProvider):
             # Use custom retry decorator with logging
             @retry_with_logging(self.retry, self.logger)
             def replication_operation(query: str):
+                self.logger.debug(
+                    f"Executing replication query: {query}",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
                 self.spark.sql(query)
                 return True
 
@@ -430,6 +456,10 @@ class ReplicationProvider(BaseProvider):
             # Use custom retry decorator with logging
             @retry_with_logging(self.retry, self.logger)
             def volume_replication_operation(query: str):
+                self.logger.debug(
+                    f"Executing volume replication query: {query}",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
                 self.spark.sql(query)
                 return True
 
@@ -847,8 +877,16 @@ class ReplicationProvider(BaseProvider):
             @retry_with_logging(self.retry, self.logger)
             def tagging_operation(unset_query: str, set_query: str):
                 if unset_query:
+                    self.logger.debug(
+                        f"Executing tag unset query: {unset_query}",
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
                     self.spark.sql(unset_query)
                 if set_query:
+                    self.logger.debug(
+                        f"Executing tag set query: {set_query}",
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
                     self.spark.sql(set_query)
                 return True
 

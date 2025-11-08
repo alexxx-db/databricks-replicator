@@ -7,11 +7,11 @@ replication_group: "readme_example_group"
 source_databricks_connect_config:
   # Mandatory: source name identifier
   name: "azure"
-  # Mandatory: source sharing identifier
+  # Optional: source metastore id. Required if replication_config.create_shared_catalog is true and source spark can not be created.e.g. due to network restriction.
   sharing_identifier: "azure:eastus2:b86c6879-8c55-4e70-a585-18d16a4fa6e9"
   # Mandatory: Source Databricks workspace url
   host: "https://adb-984752964297111.11.azuredatabricks.net/"
-  # Optional: Source Databricks personal access token secret details.
+  # Optional: Source Databricks access token secret details. Required if job is run outside source Databricks workspace.
   token:
     secret_scope: "my_secret_scope"
     secret_key: "azure_pat"
@@ -22,11 +22,11 @@ source_databricks_connect_config:
 target_databricks_connect_config:
   # Mandatory: target name identifier
   name: "aws"
-  # Mandatory: target sharing identifier
+  # Optional: target metastore id. Required if backup_config.create_recipient is true and target spark can not be created.e.g. due to network restriction.
   sharing_identifier: "aws:us-west-2:b169b504-4c54-49f2-bc3a-adf4b128f36d"
   # Mandatory: Target Databricks workspace url
   host: "https://e2-demo-field-eng.cloud.databricks.com/"
-  # Optional: Target Databricks personal access token secret details.
+  # Optional: Target Databricks access token secret details. Required if job is run outside target Databricks workspace.
   token:
     secret_scope: "my_secret_scope"
     secret_key: "aws_pat"
@@ -48,13 +48,16 @@ audit_config:
 external_location_mapping:
 "abfss://test@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/test/"
 
-# At least one of uc_object_types, table_types, volume_types must be provided.
-# Optional at replication group level or catalog level. can be overriden by args
-# when table_tag or column tag is included in uc_object_types, table_types must be provided.
-# when volume_tag is included in uc_object_types, volume_types must be provided.
-# when view_tag is included in uc_object_types, table_types must include view.
+# Mandatory: At least one of uc_object_types, table_types, volume_types must be provided at args level(highest priority), catalog level or replication group level (lowest priority).
+# when uc_object_types is provided, uc metadata will be replicated.
+# when table_types is provided, data in tables of specified types will be replicated.
+# when volume_types is provided, files in volumes of specified types will be replicated.
+# both table_types and volume_types will also apply filter on tables/volumes for table_tag, column_tag and volume_tag replication.
+
+# Optional: replication group level. can be overriden by catalog level or args
 uc_object_types:
   [
+    "all",
     "catalog",
     "catalog_tag",
     "schema",
@@ -66,14 +69,16 @@ uc_object_types:
     "column_tag",
   ]
 
-# Optional at replication group level or catalog level. can be overriden by args
+# Optional: replication group level. can be overriden by catalog level or args
 # supported types: streaming_table, managed, external, view.
 # streaming table can not be backed up and replicate with other table types together.
 table_types: ["streaming_table"]
 
-# Optional at replication group level or catalog level. can be overriden by args
+# Optional: replication group level. can be overriden by catalog level or args
 # supported volume types: managed, external.
-volume_types: ["managed", "external"]
+volume_types: ["all","managed", "external"]
+
+# Mandatory: At least one of backup_config, replication_config, reconciliation_config must be provided at catalog level or replication group level (lower priority).
 
 # Optional: backup configuration (at replication group level)
 backup_config:
@@ -107,10 +112,6 @@ backup_config:
 replication_config:
   # Mandatory at replication group level or catalog level: whether to replicate catalog.
   enabled: true
-  # Optional: whether to replicate data. default is true.
-  replicate_data: true
-  # Optional: whether to replicate uc metadata. default is true.
-  replicate_uc: true
   # Optional: whether to replicate the catalog if it does not exist on target.default is false.
   create_target_catalog: false
   # Optional: target catalog location. default is None.
@@ -133,8 +134,6 @@ replication_config:
   intermediate_catalog_location: null
   # Optional: whether to enforce schema during replication. default is true.
   enforce_schema: true
-  # Optional: whether to copy files during replication. default is true.
-  copy_files: true
   # Optional: whether to overwrite tags during replication. default is true.
   overwrite_tags: true
 

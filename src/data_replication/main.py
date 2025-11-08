@@ -10,6 +10,7 @@ import os
 import sys
 
 # Determine the parent directory of the current script for module imports
+EXECUTED_IN_WORKSPACE = False
 PWD = ""
 try:
     PWD = (
@@ -20,6 +21,7 @@ try:
         .get()
     )  # type: ignore  # noqa: E501
     parent_folder = os.path.dirname(os.path.dirname(PWD))
+    EXECUTED_IN_WORKSPACE = True
 except NameError:
     # Fallback when running outside Databricks (e.g. local development or tests)
     parent_folder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,24 +61,24 @@ def create_logger(config) -> DataReplicationLogger:
 def parse_comma_delimited_enums(value: str, enum_class, arg_name: str):
     """
     Parse comma-delimited string into list of enum values.
-    
+
     Args:
         value: Comma-delimited string
         enum_class: Enum class to validate against
         arg_name: Argument name for error messages
-        
+
     Returns:
         List of enum values
-        
+
     Raises:
         ValueError: If any value is not valid for the enum
     """
     if not value:
         return None
-        
+
     items = [item.strip() for item in value.split(",")]
     items = [item for item in items if item]  # Filter empty strings
-    
+
     result = []
     for item in items:
         try:
@@ -88,7 +90,7 @@ def parse_comma_delimited_enums(value: str, enum_class, arg_name: str):
                 f"Invalid value '{item}' for {arg_name}. "
                 f"Valid values are: {', '.join(valid_values)}"
             )
-    
+
     return result
 
 
@@ -301,7 +303,7 @@ def setup_argument_parser():
     parser.add_argument(
         "--uc-object-types",
         type=str,
-        help="comma-separated list of UC metadata types to replicate. Acceptable values: catalog,catalog_tag,schema,schema_tag,view_tag,table_tag,column_tag,volume,volume_tag",
+        help="comma-separated list of UC metadata types to replicate. Acceptable values: all,catalog,catalog_tag,schema,schema_tag,view_tag,table_tag,column_tag,volume,volume_tag",
     )
 
     parser.add_argument(
@@ -313,7 +315,14 @@ def setup_argument_parser():
     parser.add_argument(
         "--volume-types",
         type=str,
-        help="comma-separated list of volume types to process. Acceptable values: managed,external",
+        help="comma-separated list of volume types to process. Acceptable values: all,managed,external",
+    )
+
+    parser.add_argument(
+        "--logging-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level. Acceptable values: DEBUG,INFO,WARNING,ERROR,CRITICAL",
     )
 
     return parser
@@ -341,7 +350,7 @@ def main():
         return 1
 
     try:
-        # Parse the enum override arguments  
+        # Parse the enum override arguments
         uc_object_types_override = parse_comma_delimited_enums(
             args.uc_object_types, UCObjectType, "--uc-object-types"
         )
@@ -351,7 +360,7 @@ def main():
         volume_types_override = parse_comma_delimited_enums(
             args.volume_types, VolumeType, "--volume-types"
         )
-        
+
         # Load and validate configuration
         config = ConfigLoader.load_from_file(
             config_path=config_path,
@@ -362,6 +371,7 @@ def main():
             uc_object_types_override=uc_object_types_override,
             table_types_override=table_types_override,
             volume_types_override=volume_types_override,
+            logging_level_override=args.logging_level,
         )
         logger = create_logger(config)
 
@@ -376,6 +386,14 @@ def main():
             run_id = args.run_id
 
         w = WorkspaceClient()
+        default_workspace_url = w.config.host
+        default_user = w.current_user.me().user_name
+        if not EXECUTED_IN_WORKSPACE:
+            logger.info("Running from external non-Databricks environment")
+        else:
+            logger.info("Running from Databricks environment")
+
+        logger.info(f"Connecting to default workspace {default_workspace_url} as user {default_user}")
 
         if config.audit_config.logging_workspace == "source":
             logging_host = config.source_databricks_connect_config.host
@@ -390,21 +408,18 @@ def main():
             logging_host, logging_secret_config, logging_cluster_id, w
         )
         logging_workspace_url = get_workspace_url_from_host(logging_host)
+
         if not validate_spark_session(logging_spark, logging_workspace_url):
             logger.error(
                 "Logging Spark session is not connected to the configured logging workspace"
             )
             raise ConfigurationError(
-                "Logging Spark session is not connected to the configured logging workspace"
+                f"""Logging Spark session is not connected to the configured logging workspace. "
+                Expected: {logging_workspace_url}"""
             )
 
         logger.debug(f"Config: {config}")
-        logger.info(
-            f"Source Metastore: {config.source_databricks_connect_config.sharing_identifier}"
-        )
-        logger.info(
-            f"Target Metastore: {config.target_databricks_connect_config.sharing_identifier}"
-        )
+
         logger.info(
             f"Log run_id {run_id} in {config.audit_config.audit_table} at {logging_workspace_url}"
         )

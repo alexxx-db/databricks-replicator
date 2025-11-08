@@ -71,8 +71,8 @@ class ProviderFactory:
         self.workspace_client = workspace_client
         self.logger = logger
         self.run_id = run_id or str(uuid.uuid4())
-        self.db_ops = DatabricksOperations(spark)
-        self.db_ops_logging = DatabricksOperations(logging_spark)
+        self.db_ops = DatabricksOperations(spark, logger)
+        self.db_ops_logging = DatabricksOperations(logging_spark, logger)
 
         # Initialize AuditLogger if audit table is configured
         self.audit_logger: Optional[AuditLogger] = None

@@ -5,27 +5,96 @@ This module provides utilities for interacting with Databricks catalogs,
 schemas, and tables.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+import time
 
 from databricks.connect import DatabricksSession
 from pyspark.sql.functions import col
 
-from data_replication.config.models import RetryConfig, TableType, VolumeType
+from data_replication.audit.logger import DataReplicationLogger
+from data_replication.config.models import (
+    RetryConfig,
+    TableType,
+    UCObjectType,
+    VolumeType,
+)
 from data_replication.exceptions import TableNotFoundError
-from data_replication.utils import retry_with_logging
+from data_replication.utils import (
+    retry_with_logging,
+    get_spark_current_user,
+    get_spark_workspace_url,
+)
 
 
 class DatabricksOperations:
     """Utility class for Databricks operations."""
 
-    def __init__(self, spark: DatabricksSession):
+    def __init__(
+        self, spark: DatabricksSession, logger: Optional[DataReplicationLogger] = None
+    ):
         """
         Initialize Databricks operations.
 
         Args:
             spark: DatabricksSession instance
+            logger: Optional logger for SQL statement logging
         """
         self.spark = spark
+        self.logger = logger
+
+    def _execute_sql(self, sql_query: str, operation_context: str = ""):
+        """
+        Execute SQL with debug logging.
+
+        Args:
+            sql_query: The SQL query to execute
+            operation_context: Context description for the operation
+
+        Returns:
+            Result of the SQL execution
+        """
+        if self.logger:
+            current_user = get_spark_current_user(self.spark)
+            workspace_url = get_spark_workspace_url(self.spark)
+            self.logger.debug(f"Workspace: {workspace_url}, User: {current_user}")
+            self.logger.debug(
+                f"Executing SQL{f' ({operation_context})' if operation_context else ''}: {sql_query}"
+            )
+
+        start_time = time.time()
+        try:
+            result = self.spark.sql(sql_query)
+            execution_time = time.time() - start_time
+
+            if self.logger:
+                self.logger.debug(
+                    f"SQL execution completed{f' ({operation_context})' if operation_context else ''} "
+                    f"in {execution_time:.3f}s"
+                )
+
+            return result
+        except Exception as e:
+            execution_time = time.time() - start_time
+
+            if self.logger:
+                self.logger.debug(
+                    f"SQL execution failed{f' ({operation_context})' if operation_context else ''} "
+                    f"after {execution_time:.3f}s: {str(e)}"
+                )
+            raise
+
+    def get_metastore_id(self) -> str:
+        """
+        Get the metastore ID of the current Databricks workspace.
+
+        Returns:
+            Metastore ID as a string
+        """
+        try:
+            metastore_id = self.spark.sql("SELECT current_metastore()").collect()[0][0]
+            return metastore_id
+        except Exception as e:
+            raise Exception(f"Failed to get metastore ID: {str(e)}") from e
 
     def create_catalog_if_not_exists(
         self, catalog_name: str, catalog_location: str
@@ -39,11 +108,15 @@ class DatabricksOperations:
         """
         try:
             if catalog_location:
-                self.spark.sql(
-                    f"CREATE CATALOG IF NOT EXISTS `{catalog_name}` MANAGED LOCATION '{catalog_location}'"
+                self._execute_sql(
+                    f"CREATE CATALOG IF NOT EXISTS `{catalog_name}` MANAGED LOCATION '{catalog_location}'",
+                    f"create catalog {catalog_name}",
                 )
             else:
-                self.spark.sql(f"CREATE CATALOG IF NOT EXISTS `{catalog_name}`")
+                self._execute_sql(
+                    f"CREATE CATALOG IF NOT EXISTS `{catalog_name}`",
+                    f"create catalog {catalog_name}",
+                )
         except Exception as e:
             raise Exception(f"""Failed to create catalog: {str(e)}""") from e
 
@@ -59,8 +132,9 @@ class DatabricksOperations:
             share_name: Name of the share
         """
         try:
-            self.spark.sql(
-                f"CREATE CATALOG IF NOT EXISTS `{catalog_name}` USING SHARE `{provider_name}`.`{share_name}`"
+            self._execute_sql(
+                f"CREATE CATALOG IF NOT EXISTS `{catalog_name}` USING SHARE `{provider_name}`.`{share_name}`",
+                f"create catalog {catalog_name} using share",
             )
         except Exception as e:
             raise Exception(f"""
@@ -77,13 +151,16 @@ class DatabricksOperations:
         """
         try:
             full_schema = f"`{catalog_name}`.`{schema_name}`"
-            self.spark.sql(f"CREATE SCHEMA IF NOT EXISTS {full_schema}")
+            self._execute_sql(
+                f"CREATE SCHEMA IF NOT EXISTS {full_schema}",
+                f"create schema {catalog_name}.{schema_name}",
+            )
         except Exception as e:
             raise Exception(f"""Failed to create schema: {str(e)}""") from e
 
     def get_tables_in_schema(self, catalog_name: str, schema_name: str) -> List[str]:
         """
-        Get all tables in a schema, including STREAMING_TABLE and MANAGED table types.
+        Get all tables in a schema
 
         Args:
             catalog_name: Name of the catalog
@@ -123,6 +200,9 @@ class DatabricksOperations:
         Returns:
             List of table names that are of the selected types
         """
+
+        if table_types is None or len(table_types) == 0:
+            return table_names
 
         return [
             table
@@ -276,7 +356,7 @@ class DatabricksOperations:
                 table_type = "STREAMING_TABLE"
                 return table_type
 
-            # when it's Managed, check if it's STREAMING_TABLE
+            # when it's Managed, check if it's EXTERNAL
             # as it may be an external table when delta shared
             location = (
                 self.spark.sql(f"DESCRIBE DETAIL {table_name}")
@@ -299,7 +379,9 @@ class DatabricksOperations:
             table_name: Full table name (catalog.schema.table)
         """
         try:
-            self.spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+            self._execute_sql(
+                f"DROP TABLE IF EXISTS {table_name}", f"drop table {table_name}"
+            )
         except Exception as e:
             raise Exception(f"""Failed to drop table: {str(e)}""") from e
 
@@ -477,7 +559,7 @@ class DatabricksOperations:
                 return existing_recipient
 
             create_query = f"CREATE RECIPIENT IF NOT EXISTS `{recipient_name}` USING ID '{sharing_identifier}'"
-            self.spark.sql(create_query)
+            self._execute_sql(create_query, f"create recipient {recipient_name}")
             return recipient_name
 
         except Exception as e:
@@ -499,14 +581,16 @@ class DatabricksOperations:
         try:
             # Create the share
             create_share_query = f"CREATE SHARE IF NOT EXISTS `{share_name}`"
-            self.spark.sql(create_share_query)
+            self._execute_sql(create_share_query, f"create share {share_name}")
 
             # Grant SELECT and READ_VOLUME permissions to recipient
             grant_select_query = (
                 f"GRANT SELECT ON SHARE `{share_name}` TO RECIPIENT `{recipient_name}`"
             )
 
-            self.spark.sql(grant_select_query)
+            self._execute_sql(
+                grant_select_query, f"grant permissions on share {share_name}"
+            )
 
         except Exception as e:
             raise Exception(
@@ -576,7 +660,10 @@ class DatabricksOperations:
             add_schema_query = (
                 f"ALTER SHARE `{share_name}` ADD SCHEMA {full_schema_name}"
             )
-            self.spark.sql(add_schema_query)
+            self._execute_sql(
+                add_schema_query,
+                f"add schema {catalog_name}.{schema_name} to share {share_name}",
+            )
 
         except Exception as e:
             raise Exception(
@@ -647,6 +734,13 @@ class DatabricksOperations:
         Returns:
             List of volume names that are of the selected types
         """
+
+        if (
+            volume_types is None
+            or len(volume_types) == 0
+            or UCObjectType.ALL in volume_types
+        ):
+            return volume_names
         return [
             volume
             for volume in volume_names

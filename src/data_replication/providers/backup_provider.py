@@ -8,14 +8,46 @@ for both delta tables and streaming tables/materialized views.
 from datetime import datetime, timezone
 from typing import List
 
+from data_replication.databricks_operations import DatabricksOperations
+
 from ..config.models import RunResult
 from ..exceptions import BackupError
-from ..utils import retry_with_logging
+from ..utils import (
+    create_spark_session,
+    get_workspace_url_from_host,
+    retry_with_logging,
+    validate_spark_session,
+)
 from .base_provider import BaseProvider
 
 
 class BackupProvider(BaseProvider):
     """Provider for backup operations using deep clone."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Setup target Spark session if create_recipient or create_share is True but target_databricks_connect_config.sharing_identifier is not provided
+        if (
+            self.catalog_config.backup_config
+            and (
+                self.catalog_config.backup_config.create_recipient
+                or self.catalog_config.backup_config.create_share
+            )
+            and not self.target_databricks_config.sharing_identifier
+        ):
+            target_host = self.target_databricks_config.host
+            target_secret_config = self.target_databricks_config.token
+            target_cluster_id = self.target_databricks_config.cluster_id
+            self.target_spark = create_spark_session(
+                host=target_host,
+                secret_config=target_secret_config,
+                cluster_id=target_cluster_id,
+                workspace_client=self.workspace_client,
+            )
+            validate_spark_session(
+                self.target_spark, get_workspace_url_from_host(target_host)
+            )
+            self.target_dbops = DatabricksOperations(self.target_spark, self.logger)
 
     def get_operation_name(self) -> str:
         """Get the name of the operation for logging purposes."""
@@ -61,11 +93,14 @@ class BackupProvider(BaseProvider):
 
         # Create delta share recipient if configured
         if backup_config.create_recipient:
+            sharing_identifier = self.target_databricks_config.sharing_identifier
+            if not sharing_identifier:
+                sharing_identifier = self.target_dbops.get_metastore_id()
             self.logger.info(
-                f"""Creating delta share recipient: {backup_config.recipient_name} for id: {self.target_databricks_config.sharing_identifier}"""
+                f"""Creating delta share recipient: {backup_config.recipient_name} for id: {sharing_identifier}"""
             )
             recipient_name = self.db_ops.create_recipient(
-                self.target_databricks_config.sharing_identifier,
+                sharing_identifier,
                 backup_config.recipient_name,
             )
             if recipient_name != backup_config.recipient_name:
@@ -76,8 +111,11 @@ class BackupProvider(BaseProvider):
 
         # Create delta shares at catalog level if configured
         if backup_config.create_share:
+            sharing_identifier = self.target_databricks_config.sharing_identifier
+            if not sharing_identifier:
+                sharing_identifier = self.target_dbops.get_metastore_id()            
             backup_config.recipient_name = self.db_ops.get_recipient_name(
-                self.target_databricks_config.sharing_identifier
+                sharing_identifier
             )
             self.logger.info(
                 f"""Creating delta share: {backup_config.share_name} and granting access to recipient: {backup_config.recipient_name}"""
@@ -122,7 +160,9 @@ class BackupProvider(BaseProvider):
             )
             return results
 
-        table_results = super().process_schema_concurrently(schema_name, table_list, volume_list)
+        table_results = super().process_schema_concurrently(
+            schema_name, table_list, volume_list
+        )
         results.extend(table_results)
         return results
 
@@ -249,7 +289,15 @@ class BackupProvider(BaseProvider):
             # Use custom retry decorator with logging
             @retry_with_logging(self.retry, self.logger)
             def backup_operation(backup_query: str, unset_query: str):
+                self.logger.debug(
+                    f"Executing backup query: {backup_query}",
+                    extra={"run_id": self.run_id, "operation": "backup"},
+                )
                 self.spark.sql(backup_query)
+                self.logger.debug(
+                    f"Executing unset query: {unset_query}",
+                    extra={"run_id": self.run_id, "operation": "backup"},
+                )
                 self.spark.sql(unset_query)
                 return True
 

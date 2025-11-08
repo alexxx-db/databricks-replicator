@@ -15,6 +15,7 @@ from data_replication.config.models import (
     ReplicationSystemConfig,
     SchemaConfig,
     ConcurrencyConfig,
+    LoggingConfig,
     TableConfig,
     UCObjectType,
     TableType,
@@ -39,6 +40,7 @@ class ConfigLoader:
         uc_object_types_override: list = None,
         table_types_override: list = None,
         volume_types_override: list = None,
+        logging_level_override: str = None,
     ) -> ReplicationSystemConfig:
         """
         Load and validate configuration from a YAML file.
@@ -54,6 +56,8 @@ class ConfigLoader:
             uc_object_types_override: List of UCObjectType enums to override in config
             table_types_override: List of TableType enums to override in config
             volume_types_override: List of VolumeType enums to override in config
+            logging_level_override: Logging level to override in config
+                (e.g., "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
         Returns:
             Validated ReplicationSystemConfig instance
@@ -262,6 +266,36 @@ class ConfigLoader:
             except ValidationError as e:
                 raise ConfigurationError(
                     f"Invalid concurrency configuration: {e}"
+                ) from e
+
+        # Handle logging_level override
+        if logging_level_override:
+            try:
+                # Validate logging level value
+                valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+                if logging_level_override.upper() not in valid_levels:
+                    raise ValidationError(
+                        f"Invalid logging level '{logging_level_override}'. "
+                        f"Must be one of {valid_levels}"
+                    )
+
+                # Get existing logging config or create default
+                existing_logging = config_data.get("logging", {})
+                
+                # Create logging config with level override
+                validated_logging = LoggingConfig(
+                    level=logging_level_override.upper(),
+                    format=existing_logging.get("format", "json"),
+                    log_to_file=existing_logging.get("log_to_file", False),
+                    log_file_path=existing_logging.get("log_file_path")
+                )
+
+                # Apply override to config data
+                config_data["logging"] = validated_logging.model_dump()
+
+            except ValidationError as e:
+                raise ConfigurationError(
+                    f"Invalid logging_level configuration: {e}"
                 ) from e
 
         try:

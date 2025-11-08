@@ -42,12 +42,21 @@ def create_spark_session(
     spark = DatabricksSession.builder.serverless(True).getOrCreate()
     return spark
 
+def get_spark_workspace_url(spark: DatabricksSession) -> str:
+    """Get the workspace URL from the Spark session configuration."""
+    return spark.conf.get("spark.databricks.workspaceUrl")
 
 def validate_spark_session(spark: DatabricksSession, workspace_url: str) -> bool:
     """Validate if the Spark session is connected to the right Databricks workspace."""
-    spark_workspace_url = spark.conf.get("spark.databricks.workspaceUrl")
+    spark_workspace_url = get_spark_workspace_url(spark)
     return spark_workspace_url == workspace_url
 
+def get_spark_current_user(spark: DatabricksSession) -> str:
+    """Get the current user from the Spark session configuration."""
+    # Get current execution user using Spark SQL
+    execution_user = spark.sql("SELECT current_user() as user").collect()[0]["user"]
+
+    return execution_user
 
 def get_workspace_url_from_host(host: str) -> str:
     """Extract the workspace URL from the host."""

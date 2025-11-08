@@ -10,6 +10,11 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+class ExecuteAt(str, Enum):
+    """Enumeration for where to execute certain operations."""
+
+    SOURCE = "source"
+    TARGET = "target"
 
 class TableType(str, Enum):
     """Enumeration of supported table types."""
@@ -24,14 +29,7 @@ class VolumeType(str, Enum):
 
     MANAGED = "managed"
     EXTERNAL = "external"
-
-
-class ExecuteAt(str, Enum):
-    """Enumeration of execution locations for operations."""
-
-    SOURCE = "source"
-    TARGET = "target"
-    EXTERNAL = "external"
+    ALL = "all"
 
 
 class UCObjectType(str, Enum):
@@ -47,6 +45,7 @@ class UCObjectType(str, Enum):
     VOLUME_TAG = "volume_tag"
     TABLE_TAG = "table_tag"
     COLUMN_TAG = "column_tag"
+    ALL = "all"
 
 
 class SecretConfig(BaseModel):
@@ -85,7 +84,7 @@ class DatabricksConnectConfig(BaseModel):
     """Configuration for Databricks Connect."""
 
     name: str
-    sharing_identifier: str
+    sharing_identifier: Optional[str] = None
     host: str
     token: Optional[SecretConfig] = None
     cluster_id: Optional[str] = None
@@ -158,8 +157,6 @@ class ReplicationConfig(BaseModel):
     """Configuration for replication operations."""
 
     enabled: Optional[bool] = None
-    replicate_data: Optional[bool] = True
-    replicate_uc: Optional[bool] = True
     create_target_catalog: Optional[bool] = False
     target_catalog_location: Optional[str] = None
     create_shared_catalog: Optional[bool] = False
@@ -170,7 +167,6 @@ class ReplicationConfig(BaseModel):
     intermediate_catalog: Optional[str] = None
     intermediate_catalog_location: Optional[str] = None
     enforce_schema: Optional[bool] = True
-    copy_files: Optional[bool] = True
     overwrite_tags: Optional[bool] = True
 
     @field_validator("source_catalog", "intermediate_catalog")
@@ -252,7 +248,7 @@ class LoggingConfig(BaseModel):
     def validate_level(cls, v):
         """Validate logging level."""
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        if v.lower() not in valid_levels:
+        if v.upper() not in valid_levels:
             raise ValueError(
                 f"Invalid logging level: {v}. Must be one of {valid_levels}"
             )
@@ -515,6 +511,7 @@ class ReplicationSystemConfig(BaseModel):
                 # Assign default backup catalog
                 if (
                     catalog.backup_config.backup_catalog is None
+                    and catalog.table_types
                     and catalog.table_types == [TableType.STREAMING_TABLE]
                 ):
                     catalog.backup_config.backup_catalog = default_backup_catalog
@@ -548,13 +545,13 @@ class ReplicationSystemConfig(BaseModel):
                         (
                             f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
                         )
-                        if catalog.table_types == [TableType.STREAMING_TABLE]
+                        if catalog.table_types and catalog.table_types == [TableType.STREAMING_TABLE]
                         else (f"{catalog.catalog_name}_to_{target_name}_share")
                     )
                 if catalog.replication_config.source_catalog is None:
                     catalog.replication_config.source_catalog = (
                         f"__replication_internal_{catalog.catalog_name}_from_{source_name}"
-                        if catalog.table_types == [TableType.STREAMING_TABLE]
+                        if catalog.table_types and catalog.table_types == [TableType.STREAMING_TABLE]
                         else f"{catalog.catalog_name}_from_{source_name}"
                     )
                 if catalog.replication_config.original_source_catalog is None:
@@ -622,25 +619,6 @@ class ReplicationSystemConfig(BaseModel):
                 raise ValueError(
                     f"at least one of table_types, uc_object_types and volume_types must be provided in catalog: {catalog.catalog_name}"
                 )
-            
-            # If volume_tag is specified, volume_types must be provided
-            if UCObjectType.VOLUME_TAG in (catalog.uc_object_types or []):
-                if catalog.volume_types is None or len(catalog.volume_types) == 0:
-                    raise ValueError(
-                        f"volume_types must be provided when volume_tag is included in uc_object_types in catalog: {catalog.catalog_name}"
-                    )
-            # If table_tag is specified, table_types must be provided
-            if UCObjectType.TABLE_TAG in (catalog.uc_object_types or []):
-                if catalog.table_types is None or len(catalog.table_types) == 0:
-                    raise ValueError(
-                        f"table_types must be provided when table_tag is included in uc_object_types in catalog: {catalog.catalog_name}"
-                    )
-            # If column_tag is specified, column_types must be provided
-            if UCObjectType.COLUMN_TAG in (catalog.uc_object_types or []):
-                if catalog.column_types is None or len(catalog.column_types) == 0:
-                    raise ValueError(
-                        f"column_types must be provided when column_tag is included in uc_object_types in catalog: {catalog.catalog_name}"
-                    )
 
             # Ensure only one of schema_filter_expression or target_schemas is provided
             if catalog.schema_filter_expression and catalog.target_schemas:
@@ -651,18 +629,17 @@ class ReplicationSystemConfig(BaseModel):
                 )
 
             # Validate streaming table constraints
-            has_streaming_table = TableType.STREAMING_TABLE in catalog.table_types
+            has_streaming_table = (
+                catalog.table_types
+                and TableType.STREAMING_TABLE in catalog.table_types
+            )
             has_other_table_types = (
-                len([t for t in catalog.table_types if t != TableType.STREAMING_TABLE])
-                > 0
+                catalog.table_types
+                and len([t for t in catalog.table_types if t != TableType.STREAMING_TABLE]) > 0
             )
 
             # Streaming tables can't be backed up and replicated with other object types
-            if (
-                catalog.replication_config.replicate_data
-                and has_streaming_table
-                and has_other_table_types
-            ):
+            if has_streaming_table and has_other_table_types:
                 if (catalog.backup_config and catalog.backup_config.enabled) or (
                     catalog.replication_config and catalog.replication_config.enabled
                 ):

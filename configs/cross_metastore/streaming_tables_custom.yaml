@@ -1,9 +1,9 @@
 # cli: data-replicator configs/cross_metastore/streaming_tables_custom.yaml --target-catalog [catalog_name]
+# Steps:
 # 1. BYO delta share infrastructure. recipient, shares and catalogs are created outside of this tool.
 # 2. Backup with existing backup catalog and share names.
-# 3. Replication from existing shared catalog.
+# 3. Replication from existing shared catalog. Note: For Streaming Table replication, tables need to already exist in target before Deep Clone
 # 4. Reconciliation from existing shared catalog
-# 5. use {target_catalogs.catalog_name} to reference target catalog name
 
 version: "1.0"
 
@@ -11,7 +11,6 @@ replication_group: "streaming_tables_custom"
 
 source_databricks_connect_config:
   name: "azure"
-  sharing_identifier: "azure:eastus2:b86c6879-8c55-4e70-a585-18d16a4fa6e9"
   host: "https://adb-984752964297111.11.azuredatabricks.net"
   token:
     secret_scope: "test_kr"
@@ -19,7 +18,6 @@ source_databricks_connect_config:
 
 target_databricks_connect_config:
   name: "aws"
-  sharing_identifier: "aws:us-west-2:b169b504-4c54-49f2-bc3a-adf4b128f36d"
   host: "https://e2-demo-field-eng.cloud.databricks.com"
   token:
     secret_scope: "test_kr"

@@ -90,7 +90,7 @@ class DataReplicationLogger:
             config: Logging configuration
         """
         self.logger.handlers.clear()
-        self.logger.setLevel(getattr(logging, config.level))
+        self.logger.setLevel(getattr(logging, config.level.upper()))
 
         # Choose formatter
         if config.format == "json":

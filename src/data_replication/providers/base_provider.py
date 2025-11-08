@@ -289,18 +289,8 @@ class BaseProvider(ABC):
             tables = []
             volumes = []
             # Get all tables and volumes in the schema
-            if self.catalog_config.table_types:
-                tables = self._get_tables(schema_name, table_list)
-                if len(tables) == 0:
-                    self.logger.info(
-                        f"No tables found in schema {self.catalog_name}.{schema_name}"
-                    )
-            if self.catalog_config.volume_types:
-                volumes = self._get_volumes(schema_name, volume_list)
-                if len(volumes) == 0:
-                    self.logger.info(
-                        f"No volumes found in schema {self.catalog_name}.{schema_name}"
-                    )
+            tables = self._get_tables(schema_name, table_list)
+            volumes = self._get_volumes(schema_name, volume_list)
 
             total_objects = len(tables) + len(volumes)
             if total_objects == 0:

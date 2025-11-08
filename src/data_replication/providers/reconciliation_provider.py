@@ -130,6 +130,10 @@ class ReconciliationProvider(BaseProvider):
             # Use custom retry decorator with logging
             @retry_with_logging(self.retry, self.logger)
             def reconciliation_operation(query: str):
+                self.logger.debug(
+                    f"Executing reconciliation query: {query}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )
                 return self.spark.sql(query)
 
             # Flag to track if we should continue with remaining checks
