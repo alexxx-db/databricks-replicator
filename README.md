@@ -37,7 +37,8 @@ This system provides incremental data and UC metadata replication capabilities b
 - Not required for uc metadata replication
 
 ### Replication Operations - Cross-metastore/same metastore incremental data and uc replication
-- Deep clone tables/volume files across workspaces from shared catalog with schema enforcement
+- Deep clone tables across workspaces from shared catalog with schema enforcement
+- Incremental copy volume files across workspaces from shared catalog using autoloader
 - Replicate UC metadata from source uc to target uc (not through delta share)
 
 ### Reconciliation Operations (Table only)
@@ -86,7 +87,7 @@ Object level result details are recorded in configurable audit table location in
 |-------------|-----------|-------------|
 | run_id | STRING | Unique identifier for each execution run |
 | logging_time | TIMESTAMP | When the log entry was created |
-| operation_type | STRING | Type of operation (backup, replication, reconciliation) |
+| operation_type | STRING | Type of operation (backup, uc_replication, reconciliation) |
 | catalog_name | STRING | Target catalog name |
 | schema_name | STRING | Target schema name |
 | object_name | STRING | Target Object name |
