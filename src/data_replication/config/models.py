@@ -138,7 +138,7 @@ class BackupConfig(BaseModel):
     create_recipient: Optional[bool] = False
     recipient_name: Optional[str] = None
     create_share: Optional[bool] = False
-    add_to_share: Optional[bool] = True
+    add_to_share: Optional[bool] = False
     share_name: Optional[str] = None
     create_backup_catalog: Optional[bool] = False
     backup_catalog: Optional[str] = None

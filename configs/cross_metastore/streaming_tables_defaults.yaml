@@ -32,6 +32,7 @@ backup_config:
   create_backup_catalog: true
   create_recipient: true
   create_share: true
+  add_to_share: true
 replication_config:
   enabled: true
   create_shared_catalog: true

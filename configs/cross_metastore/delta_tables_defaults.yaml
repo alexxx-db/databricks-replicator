@@ -35,6 +35,7 @@ backup_config:
   enabled: true
   create_recipient: true
   create_share: true
+  add_to_share: true  
 replication_config:
   enabled: true
   create_target_catalog: true
