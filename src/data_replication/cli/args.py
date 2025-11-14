@@ -194,8 +194,7 @@ def setup_argument_parser():
         "--concurrency",
         "-con",
         type=int,
-        default=4,
-        help="maximum number of concurrent tasks, default is 4",
+        help="maximum number of concurrent tasks",
     )
 
     parser.add_argument(
