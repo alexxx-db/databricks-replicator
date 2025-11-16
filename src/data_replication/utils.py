@@ -186,3 +186,17 @@ def merge_maps(source_maps: list, target_maps: list, overwrite: bool) -> dict:
         }
         merged_maps = {**merged_maps, **existing_maps}
     return merged_maps
+
+
+def filter_common_maps(source_maps: list, target_maps: list) -> tuple:
+    """Get uncommon maps from source compared to target maps."""
+    if source_maps is None or target_maps is None:
+        return source_maps, target_maps
+    source_set = set(frozenset(d.items()) for d in source_maps)
+    target_set = set(frozenset(d.items()) for d in target_maps)
+
+    common = source_set & target_set
+
+    source_maps = [d for d in source_maps if frozenset(d.items()) not in common]
+    target_maps = [d for d in target_maps if frozenset(d.items()) not in common]
+    return source_maps, target_maps

@@ -186,21 +186,21 @@ class ProviderFactory:
         duration = (end_time - start_time).total_seconds()
 
         # Calculate summary statistics
-        successful_operations = sum(1 for r in results if r.status == "success")
-        failed_operations = sum(1 for r in results if r.status == "failed")
-        total_operations = len(results)
+        successful_operations = sum(1 for r in results if results and r.status == "success")
+        failed_operations = sum(1 for r in results if results and r.status == "failed")
+        total_operations = len(results) if results else 0
 
         status = "completed" if failed_operations == 0 else "completed_with_failures"
 
         # Count unique catalogs, schemas, and tables
-        catalogs = set(r.catalog_name for r in results if r.catalog_name)
+        catalogs = set(r.catalog_name for r in results if results and r.catalog_name)
         schemas = set(
-            f"{r.catalog_name}.{r.schema_name}" for r in results if r.schema_name
+            f"{r.catalog_name}.{r.schema_name}" for r in results if results and r.schema_name
         )
         objects = set(
             f"{r.catalog_name}.{r.schema_name}.{r.object_name}"
             for r in results
-            if r.object_name
+            if results and r.object_name
         )
 
         success_rate = (
@@ -357,8 +357,8 @@ class ProviderFactory:
                 catalog_results = provider.process_catalog()
                 results.extend(catalog_results)
 
-                successful = sum(1 for r in catalog_results if r.status == "success")
-                total = len(catalog_results)
+                successful = sum(1 for r in catalog_results if catalog_results and r.status == "success")
+                total = len(catalog_results) if catalog_results else 0
 
                 self.logger.info(
                     f"Completed {operation_name} for catalog {catalog.catalog_name}: "

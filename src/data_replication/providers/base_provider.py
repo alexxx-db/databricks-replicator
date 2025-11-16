@@ -16,7 +16,7 @@ from databricks.connect import DatabricksSession
 from databricks.sdk import WorkspaceClient
 from pyspark.sql.utils import AnalysisException
 
-from data_replication.utils import retry_with_logging, merge_maps
+from data_replication.utils import filter_common_maps, retry_with_logging, merge_maps
 
 from ..audit.audit_logger import AuditLogger
 from ..audit.logger import DataReplicationLogger
@@ -224,11 +224,16 @@ class BaseProvider(ABC):
 
         results = []
         start_time = datetime.now(timezone.utc)
+        catalog_run_result = []
 
         try:
             # Setup operation-specific catalogs (implemented by subclasses)
             self.catalog_name = self.setup_operation_catalogs()
-
+            uc_object_types_catalog_processed = (
+                self.catalog_config.uc_object_types.copy()
+                if self.catalog_config.uc_object_types
+                else []
+            )
             self.logger.info(
                 f"Starting {self.get_operation_name()} catalog: {self.catalog_name}",
                 extra={
@@ -242,14 +247,15 @@ class BaseProvider(ABC):
                 UCObjectType.CATALOG_TAG in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                uc_object_types_catalog = self.catalog_config.uc_object_types.copy()
                 run_result = self._replicate_catalog_tags()
                 results.extend(run_result)
-                self.audit_logger.log_results(results)
-                if UCObjectType.ALL not in uc_object_types_catalog:
-                    uc_object_types_catalog.remove(UCObjectType.CATALOG_TAG)
+                if run_result:
+                    catalog_run_result.extend(run_result)
+                    self.audit_logger.log_results(catalog_run_result)
+                if UCObjectType.ALL not in self.catalog_config.uc_object_types:
+                    uc_object_types_catalog_processed.remove(UCObjectType.CATALOG_TAG)
                 # immediately return if no other object types to process
-                if len(uc_object_types_catalog) == 0:
+                if len(uc_object_types_catalog_processed) == 0:
                     return results
 
             # Get schemas to process
@@ -266,19 +272,24 @@ class BaseProvider(ABC):
                         "operation": self.get_operation_name(),
                     },
                 )
+                schema_run_result = []
+                uc_object_types_schema_processed = (
+                    uc_object_types_catalog_processed.copy()
+                )
                 # Replicate schema tags if configured
                 if self.catalog_config.uc_object_types and (
                     UCObjectType.SCHEMA_TAG in self.catalog_config.uc_object_types
                     or UCObjectType.ALL in self.catalog_config.uc_object_types
                 ):
-                    uc_object_types_schema = uc_object_types_catalog.copy()
                     run_result = self._replicate_schema_tags(schema_name)
                     results.extend(run_result)
-                    self.audit_logger.log_results(results)
-                    if UCObjectType.ALL not in uc_object_types_catalog:
-                        uc_object_types_schema.remove(UCObjectType.SCHEMA_TAG)
+                    if run_result:
+                        schema_run_result.extend(run_result)
+                        self.audit_logger.log_results(schema_run_result)
+                    if UCObjectType.ALL not in self.catalog_config.uc_object_types:
+                        uc_object_types_schema_processed.remove(UCObjectType.SCHEMA_TAG)
                     # continue to next schema if no other object types to process
-                    if len(uc_object_types_schema) == 0:
+                    if len(uc_object_types_schema_processed) == 0:
                         continue
 
                 schema_results = self.process_schema_concurrently(
@@ -287,8 +298,12 @@ class BaseProvider(ABC):
                 results.extend(schema_results)
 
                 # Log summary info to regular logger
-                successful = sum(1 for r in schema_results if r.status == "success")
-                total = len(schema_results)
+                successful = sum(
+                    1
+                    for r in schema_results
+                    if schema_results and r.status == "success"
+                )
+                total = len(schema_results) if schema_results else 0
 
                 self.logger.info(
                     f"Completed {self.get_operation_name()} for schema {self.catalog_name}.{schema_name}: "
@@ -451,7 +466,6 @@ class BaseProvider(ABC):
                                 f"{catalog_name}.{schema_name}.{table_name}: "
                                 f"{result.error_message}"
                             )
-                    self.audit_logger.log_results(results)
                 except Exception as e:
                     result = self._handle_exception(
                         e,
@@ -530,7 +544,8 @@ class BaseProvider(ABC):
                                 f"{catalog_name}.{schema_name}.{volume_name}: "
                                 f"{result.error_message}"
                             )
-                    self.audit_logger.log_results(results)
+                    if results:
+                        self.audit_logger.log_results(results)
                 except Exception as e:
                     result = self._handle_exception(
                         e,
@@ -850,9 +865,11 @@ class BaseProvider(ABC):
             object_name = ""
             source_object = f"`{source_catalog}`"
             target_object = f"`{target_catalog}`"
+            object_name = target_catalog
             if schema_name:
                 source_object += f".`{schema_name}`"
                 target_object += f".`{schema_name}`"
+                object_name = schema_name
                 if table_name:
                     source_object += f".`{table_name}`"
                     target_object += f".`{table_name}`"
@@ -876,6 +893,38 @@ class BaseProvider(ABC):
             # Create tagging operation with retry and logging
             tagging_operation = self._create_tagging_operation()
 
+            (
+                uncommon_source_tag_maps_list,
+                uncommon_target_tag_maps_list,
+            ) = filter_common_maps(source_tag_maps_list, target_tag_maps_list)
+
+            if not uncommon_source_tag_maps_list and not uncommon_target_tag_maps_list:
+                self.logger.info(
+                    f"No uncommon tags found for: {source_object} -> {target_object} "
+                    f"Skipping tag replication for this {object_type}",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                return RunResult(
+                    operation_type="uc_replication",
+                    catalog_name=target_catalog,
+                    schema_name=schema_name,
+                    object_name=object_name,
+                    object_type=object_type,
+                    status="success",
+                    start_time=start_time.isoformat(),
+                    end_time=end_time.isoformat(),
+                    duration_seconds=duration,
+                    details={
+                        "source_object": source_object,
+                        "target_object": target_object,
+                        "overwrite_tags": overwrite_tags,
+                        "skipped": True,
+                    },
+                    attempt_number=attempt,
+                    max_attempts=max_attempts,
+                )
             # Merge tags using helper method
             merged_tag_maps = merge_maps(
                 source_tag_maps_list, target_tag_maps_list, overwrite_tags

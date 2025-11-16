@@ -80,7 +80,11 @@ class ReplicationProvider(BaseProvider):
             and self.catalog_config.replication_config.enabled
         )
 
-    def process_table(self, schema_name: str, table_name: str) -> List[RunResult]:
+    def process_table(
+        self,
+        schema_name: str,
+        table_name: str,
+    ) -> List[RunResult]:
         """Process a single table for replication."""
         results = []
         if self.catalog_config.table_types and len(self.catalog_config.table_types) > 0:
@@ -115,6 +119,9 @@ class ReplicationProvider(BaseProvider):
                     table_name,
                 )
                 results.extend(result)
+
+        if results:
+            self.audit_logger.log_results(results)
         return results
 
     def process_volume(self, schema_name: str, volume_name: str) -> RunResult:
@@ -142,6 +149,8 @@ class ReplicationProvider(BaseProvider):
                 volume_name,
             )
             results.extend(result)
+        if results:
+            self.audit_logger.log_results(results)
         return results
 
     def setup_operation_catalogs(self) -> str:
@@ -1234,7 +1243,10 @@ class ReplicationProvider(BaseProvider):
             comment_str = ",".join(comment_list).replace("\\", "\\\\").replace("'", "'")
 
             if len(comment_list) > 0:
-                if table_type.lower() == "view" or table_type.lower() == "streaming_table":
+                if (
+                    table_type.lower() == "view"
+                    or table_type.lower() == "streaming_table"
+                ):
                     filtered_comment_maps = {
                         k: v for k, v in merged_comment_maps.items() if v is not None
                     }
@@ -1251,7 +1263,7 @@ class ReplicationProvider(BaseProvider):
                         result, last_exception, attempt, max_attempts = (
                             column_comment_replication_operation(query)
                         )
-                elif table_type.lower() in ["managed","external"]:
+                elif table_type.lower() in ["managed", "external"]:
                     query = f"""
                     ALTER TABLE {target_table} ALTER COLUMN {comment_str}
                     """
@@ -1291,7 +1303,9 @@ class ReplicationProvider(BaseProvider):
                             "source_object": source_table,
                             "target_object": target_table,
                             "overwrite_comments": replication_config.overwrite_comments,
-                            "columns_with_comments": len(comment_list) if comment_list else 0,
+                            "columns_with_comments": len(comment_list)
+                            if comment_list
+                            else 0,
                         },
                         attempt_number=attempt,
                         max_attempts=max_attempts,
