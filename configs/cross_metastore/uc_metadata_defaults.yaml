@@ -30,6 +30,7 @@ audit_config:
 
 replication_config:
   enabled: true
+  overwrite_comments: false
 
 concurrency:
   max_workers: 5

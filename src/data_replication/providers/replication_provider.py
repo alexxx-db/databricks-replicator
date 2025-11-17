@@ -14,6 +14,7 @@ from data_replication.databricks_operations import DatabricksOperations
 from ..config.models import RunResult, TableConfig, UCObjectType, VolumeConfig
 from ..exceptions import ReplicationError, TableNotFoundError
 from ..utils import (
+    filter_common_maps,
     get_workspace_url_from_host,
     merge_maps,
     retry_with_logging,
@@ -1227,9 +1228,48 @@ class ReplicationProvider(BaseProvider):
                 target_catalog, schema_name, table_name
             )
 
+            (
+                uncommon_source_comment_maps_list,
+                uncommon_target_comment_maps_list,
+            ) = filter_common_maps(source_comment_maps_list, target_comment_maps_list)
+
+            if (
+                not uncommon_source_comment_maps_list
+                and not uncommon_target_comment_maps_list
+            ):
+                self.logger.info(
+                    f"No uncommon comment found for: {source_table} -> {target_table} "
+                    f"Skipping comment replication for this {object_type}",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                run_results.append(
+                    RunResult(
+                        operation_type="uc_replication",
+                        catalog_name=target_catalog,
+                        schema_name=schema_name,
+                        object_name=table_name,
+                        object_type=object_type,
+                        status="success",
+                        start_time=start_time.isoformat(),
+                        end_time=end_time.isoformat(),
+                        duration_seconds=duration,
+                        details={
+                            "source_object": source_table,
+                            "target_object": target_table,
+                            "overwrite_comments": replication_config.overwrite_comments,
+                            "skipped": True,
+                        },
+                        attempt_number=attempt,
+                        max_attempts=max_attempts,
+                    )
+                )
+                return run_results
+
             merged_comment_maps = merge_maps(
-                source_comment_maps_list,
-                target_comment_maps_list,
+                uncommon_source_comment_maps_list,
+                uncommon_target_comment_maps_list,
                 replication_config.overwrite_comments,
             )
 

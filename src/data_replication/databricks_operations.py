@@ -856,7 +856,7 @@ class DatabricksOperations:
         tag_names_list = None
         tag_maps_list = None
         df = self.spark.sql(f"""
-            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,b.tag_value)) as tag_maps_list 
+            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,trim(b.tag_value))) as tag_maps_list 
             from system.information_schema.catalogs as a inner join system.information_schema.catalog_tags as b 
             on a.catalog_name=b.catalog_name
             where a.catalog_name = '{catalog_name}'
@@ -875,7 +875,7 @@ class DatabricksOperations:
         tag_names_list = None
         tag_maps_list = None
         df = self.spark.sql(f"""
-            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,b.tag_value)) as tag_maps_list 
+            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,trim(b.tag_value))) as tag_maps_list 
             from system.information_schema.schemata as a inner join system.information_schema.schema_tags as b 
             on a.catalog_name=b.catalog_name and a.schema_name=b.schema_name
             where a.schema_name = '{schema_name}' and a.catalog_name = '{catalog_name}'
@@ -894,7 +894,7 @@ class DatabricksOperations:
         tag_names_list = None
         tag_maps_list = None
         df = self.spark.sql(f"""
-            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,b.tag_value)) as tag_maps_list 
+            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,trim(b.tag_value))) as tag_maps_list 
             from system.information_schema.tables as a inner join system.information_schema.table_tags as b 
             on a.table_catalog=b.catalog_name and a.table_schema=b.schema_name and a.table_name=b.table_name
             where a.table_name = '{table_name}' and a.table_schema = '{schema_name}' and a.table_catalog = '{catalog_name}'
@@ -913,7 +913,7 @@ class DatabricksOperations:
         tag_names_list = None
         tag_maps_list = None
         df = self.spark.sql(f"""
-            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,b.tag_value)) as tag_maps_list 
+            select collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,trim(b.tag_value))) as tag_maps_list 
             from system.information_schema.volumes as a inner join system.information_schema.volume_tags as b 
             on a.volume_catalog=b.catalog_name and a.volume_schema=b.schema_name and a.volume_name=b.volume_name
             where a.volume_name = '{volume_name}' and a.volume_schema = '{schema_name}' and a.volume_catalog = '{catalog_name}'
@@ -932,7 +932,7 @@ class DatabricksOperations:
 
         df = self.spark.sql(f"""
             select a.table_catalog, a.table_schema, a.table_name,a.column_name, 
-            collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,b.tag_value)) as tag_maps_list 
+            collect_list(b.tag_name) as tag_names_list, collect_list(map(b.tag_name,trim(b.tag_value))) as tag_maps_list 
             from system.information_schema.columns as a inner join system.information_schema.column_tags as b 
             on a.table_catalog=b.catalog_name and a.table_schema=b.schema_name and a.table_name=b.table_name and a.column_name=b.column_name
             where a.table_name = '{table_name}' and a.table_schema = '{schema_name}' and a.table_catalog = '{catalog_name}'
@@ -946,7 +946,7 @@ class DatabricksOperations:
         Get comments associated with columns of a table.
         """
         comment_maps_list = self.spark.sql(f"""
-            select collect_list(map(column_name,comment))as comment_maps_list from system.information_schema.columns
+            select collect_list(map(column_name,trim(coalesce(comment, ''))))as comment_maps_list from system.information_schema.columns
             where table_catalog = '{catalog_name}' and table_schema = '{schema_name}' and table_name = '{table_name}'
             group by table_catalog, table_catalog, table_name""").collect()[0][0]
 
