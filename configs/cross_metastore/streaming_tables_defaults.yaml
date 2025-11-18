@@ -1,8 +1,8 @@
 # cli: data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalogs [catalog_name] --target-schemas [schema1,schema2]
 # Steps:
 # 1. Create delta share infrastructure in this tool including backup catalog, recipient, shares and shared catalogs with default system generated names.
-# 2. Export of source Streaming table backing table as delta table into backup catalog and share.
-# 3. Deep clone backup delta table into target Streaming table backing table. Note: For Streaming Table replication, tables need to already exist in target before Deep Clone
+# 2. Deep clone source Streaming table backing table as delta table into backup catalog and add backup schema share at source
+# 3. Deep clone backup delta table into target Streaming table backing table at target. Note: For Streaming Table replication, tables need to already exist in target before Deep Clone
 # 4. Reconciliate data between source and target Streaming table.
 
 version: "1.0"

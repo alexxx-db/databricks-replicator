@@ -38,7 +38,8 @@ target_catalogs:
       backup_share_name: "aaron_dr_azure"
     replication_config:
       enabled: true
-      source_catalog: "aaron_dr_azure_shared"
+      source_catalog: "aaron_azure_shared"
+      backup_catalog: "aaron_dr_azure_shared"
     reconciliation_config:
       enabled: true
       source_catalog: aaron_azure_shared

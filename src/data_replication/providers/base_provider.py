@@ -448,24 +448,25 @@ class BaseProvider(ABC):
                     result = future.result(timeout=self.timeout_seconds)
 
                     # Handle case where process_table returns a list of results
-                    if isinstance(result, list):
-                        results.extend(result)
-                        # Check if any result in the list failed
-                        for single_result in result:
-                            if single_result.status != "success":
+                    if result:
+                        if isinstance(result, list):
+                            results.extend(result)
+                            # Check if any result in the list failed
+                            for single_result in result:
+                                if single_result.status != "success":
+                                    self.logger.error(
+                                        f"Failed to process table "
+                                        f"{catalog_name}.{schema_name}.{table_name}: "
+                                        f"{single_result.error_message}"
+                                    )
+                        else:
+                            results.append(result)
+                            if result.status != "success":
                                 self.logger.error(
                                     f"Failed to process table "
                                     f"{catalog_name}.{schema_name}.{table_name}: "
-                                    f"{single_result.error_message}"
+                                    f"{result.error_message}"
                                 )
-                    else:
-                        results.append(result)
-                        if result.status != "success":
-                            self.logger.error(
-                                f"Failed to process table "
-                                f"{catalog_name}.{schema_name}.{table_name}: "
-                                f"{result.error_message}"
-                            )
                 except Exception as e:
                     result = self._handle_exception(
                         e,

@@ -78,8 +78,7 @@ uc_object_types:
   ]
 
 # Optional: replication group level. can be overriden by catalog level or args
-# supported types: streaming_table, managed, external, view.
-# streaming table can not be backed up and replicate with other table types together.
+# supported types: streaming_table, managed, external.
 table_types: ["streaming_table"]
 
 # Optional: replication group level. can be overriden by catalog level or args
@@ -102,7 +101,7 @@ backup_config:
   create_share: false
   # Optional: whether to add the schema to share. default is false.
   add_to_share: false
-  # Optional: share name. default to <catalog_name>_to_<target_databricks_connect_config.name>_share
+  # Optional: share name for source catalog. default to <catalog_name>_to_<target_databricks_connect_config.name>_share
   share_name: "catalog_example_to_aws_share"
   # Optional: whether to create backup catalog on target. default is false.
   create_backup_catalog: false
@@ -113,7 +112,7 @@ backup_config:
   backup_catalog_location: null
   # Optional: prefix for backup schema names. default is None.
   backup_schema_prefix: null
-  # Optional: share name. default to <backup_catalog>_share
+  # Optional: share name for streaming table backing table. default to <backup_catalog>_share
   backup_share_name: "__replication_internal_catalog_example_to_aws_share"
 
 # Optional: replication configuration (at replication group level)
@@ -126,12 +125,14 @@ replication_config:
   target_catalog_location: null
   # Optional: whether to create the shared catalog. default is false.
   create_shared_catalog: false
-  # Optional: share name. default to __replication_internal_<catalog_name>_to_<target_databricks_connect_config.name>_share for streaming table
-  # <catalog_name>_to_<target_databricks_connect_config.name>_share for others
-  share_name: "__replication_internal_catalog_example_to_aws_share"
-  # Optional: shared catalog name/source catalog name. default to __replication_internal_<catalog_name>_from_<source_databricks_connect_config.name>_shared for streaming table, default to target_catalog for others
-  # <catalog_name>_from_<source_databricks_connect_config.name>_shared for others
-  source_catalog: "__replication_internal_catalog_example_from_azure_shared"
+  # Optional: share name of source catalog. default to <catalog_name>_to_<target_databricks_connect_config.name>_share
+  share_name: "catalog_example_to_aws_share"
+  # Optional: catalog created from source share. default to <catalog_name>_from_<source_databricks_connect_config.name>_shared
+  source_catalog: "catalog_example_from_azure_shared"
+  # Optional: share name for streaming table backing table share. default to __replication_internal_<catalog_name>_to_<target_databricks_connect_config.name>_share
+  backup_share_name: "__replication_internal_catalog_example_to_aws_share"
+  # Optional: catalog created from backing table share. default to __replication_internal_<catalog_name>_from_<source_databricks_connect_config.name>_shared
+  backup_catalog: "__replication_internal_catalog_example_from_azure_shared"  
   # Optional: whether to create intermediate catalog for replication. default is false.
   create_intermediate_catalog: false
   # Optional: intermediate catalog for replication. default is None.

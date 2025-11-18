@@ -10,11 +10,13 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+
 class ExecuteAt(str, Enum):
     """Enumeration for where to execute certain operations."""
 
     SOURCE = "source"
     TARGET = "target"
+
 
 class TableType(str, Enum):
     """Enumeration of supported table types."""
@@ -31,11 +33,13 @@ class VolumeType(str, Enum):
     EXTERNAL = "external"
     ALL = "all"
 
+
 class AuthType(str, Enum):
     """Enumeration of authentication types."""
 
     PAT = "pat"
     OAUTH = "oauth"
+
 
 class UCObjectType(str, Enum):
     """Enumeration of Unity Catalog object types for replication."""
@@ -53,6 +57,7 @@ class UCObjectType(str, Enum):
     COLUMN_COMMENT = "column_comment"
     ALL = "all"
 
+
 class SecretConfig(BaseModel):
     """Configuration for Databricks secrets."""
 
@@ -67,10 +72,16 @@ class SecretConfig(BaseModel):
         if not any([self.secret_pat, self.secret_client_id, self.secret_client_secret]):
             raise ValueError("At least one secret field must be provided")
         if self.secret_client_id and not self.secret_client_secret:
-            raise ValueError("secret_client_secret is required when secret_client_id is provided")
+            raise ValueError(
+                "secret_client_secret is required when secret_client_id is provided"
+            )
         if self.secret_client_secret and not self.secret_client_id:
-            raise ValueError("secret_client_id is required when secret_client_secret is provided")
+            raise ValueError(
+                "secret_client_id is required when secret_client_secret is provided"
+            )
         return self
+
+
 class AuditConfig(BaseModel):
     """Configuration for audit tables"""
 
@@ -180,6 +191,8 @@ class ReplicationConfig(BaseModel):
     create_shared_catalog: Optional[bool] = False
     share_name: Optional[str] = None
     source_catalog: Optional[str] = None
+    backup_share_name: Optional[str] = None
+    backup_catalog: Optional[str] = None
     create_intermediate_catalog: Optional[bool] = False
     intermediate_catalog: Optional[str] = None
     intermediate_catalog_location: Optional[str] = None
@@ -531,7 +544,7 @@ class ReplicationSystemConfig(BaseModel):
                 if (
                     catalog.backup_config.backup_catalog is None
                     and catalog.table_types
-                    and catalog.table_types == [TableType.STREAMING_TABLE]
+                    and TableType.STREAMING_TABLE in catalog.table_types
                 ):
                     catalog.backup_config.backup_catalog = default_backup_catalog
 
@@ -556,30 +569,33 @@ class ReplicationSystemConfig(BaseModel):
 
             # Derive default replication catalogs
             if catalog.replication_config and catalog.replication_config.enabled:
-
                 # for uc replication, default source_catalog is the same as target catalog_name
                 if catalog.uc_object_types and len(catalog.uc_object_types) > 0:
                     if catalog.replication_config.source_catalog is None:
                         catalog.replication_config.source_catalog = catalog.catalog_name
                 else:
-                # for table/volume replication, derive defaults shared catalogs
-                    if (
-                        catalog.replication_config.create_shared_catalog
-                        and catalog.replication_config.share_name is None
-                    ):
-                        catalog.replication_config.share_name = (
-                            (
-                                f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
+                    # for table/volume replication, derive defaults shared catalogs
+                    if catalog.replication_config.create_shared_catalog:
+                        if catalog.replication_config.share_name is None:
+                            catalog.replication_config.share_name = (
+                                f"{catalog.catalog_name}_to_{target_name}_share"
                             )
-                            if catalog.table_types and catalog.table_types == [TableType.STREAMING_TABLE]
-                            else (f"{catalog.catalog_name}_to_{target_name}_share")
-                        )
+                        if (
+                            catalog.replication_config.backup_share_name is None
+                            and catalog.table_types
+                            and TableType.STREAMING_TABLE in catalog.table_types
+                        ):
+                            catalog.replication_config.backup_share_name = f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
                     if catalog.replication_config.source_catalog is None:
                         catalog.replication_config.source_catalog = (
-                            f"__replication_internal_{catalog.catalog_name}_from_{source_name}"
-                            if catalog.table_types and catalog.table_types == [TableType.STREAMING_TABLE]
-                            else f"{catalog.catalog_name}_from_{source_name}"
+                            f"{catalog.catalog_name}_from_{source_name}"
                         )
+                    if (
+                        catalog.replication_config.backup_catalog is None
+                        and catalog.table_types
+                        and TableType.STREAMING_TABLE in catalog.table_types
+                    ):
+                        catalog.replication_config.backup_catalog = f"__replication_internal_{catalog.catalog_name}_from_{source_name}_shared"
 
             # Derive default reconciliation catalogs
             if catalog.reconciliation_config and catalog.reconciliation_config.enabled:
@@ -664,31 +680,21 @@ class ReplicationSystemConfig(BaseModel):
 
             # Validate streaming table constraints
             has_streaming_table = (
-                catalog.table_types
-                and TableType.STREAMING_TABLE in catalog.table_types
+                catalog.table_types and TableType.STREAMING_TABLE in catalog.table_types
             )
-            has_other_table_types = (
-                catalog.table_types
-                and len([t for t in catalog.table_types if t != TableType.STREAMING_TABLE]) > 0
-            )
-
-            # Streaming tables can't be backed up and replicated with other object types
-            if has_streaming_table and has_other_table_types:
-                if (catalog.backup_config and catalog.backup_config.enabled) or (
-                    catalog.replication_config and catalog.replication_config.enabled
-                ):
-                    raise ValueError(
-                        f"""
-                        Streaming tables cannot be backed up and replicated with other object types in catalog: {catalog.catalog_name}
-                        """
-                    )
 
             # backup_catalog should only be set for streaming tables
-            if (
-                not has_streaming_table
-                and catalog.backup_config
-                and catalog.backup_config.enabled
-                and catalog.backup_config.backup_catalog
+            if not has_streaming_table and (
+                (
+                    catalog.backup_config
+                    and catalog.backup_config.enabled
+                    and catalog.backup_config.backup_catalog
+                )
+                or (
+                    catalog.replication_config
+                    and catalog.replication_config.enabled
+                    and catalog.replication_config.backup_catalog
+                )
             ):
                 raise ValueError(
                     f"""

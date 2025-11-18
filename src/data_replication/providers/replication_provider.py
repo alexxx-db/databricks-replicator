@@ -11,7 +11,13 @@ from typing import List
 from data_replication.databricks_operations import DatabricksOperations
 
 # from delta.tables import DeltaTable
-from ..config.models import RunResult, TableConfig, UCObjectType, VolumeConfig
+from ..config.models import (
+    RunResult,
+    TableConfig,
+    TableType,
+    UCObjectType,
+    VolumeConfig,
+)
 from ..exceptions import ReplicationError, TableNotFoundError
 from ..utils import (
     filter_common_maps,
@@ -194,6 +200,12 @@ class ReplicationProvider(BaseProvider):
                     provider_name,
                     replication_config.share_name,
                 )
+                if replication_config.backup_catalog:
+                    self.db_ops.create_catalog_using_share_if_not_exists(
+                        replication_config.backup_catalog,
+                        provider_name,
+                        replication_config.backup_share_name,
+                    )
 
         return replication_config.source_catalog
 
@@ -250,18 +262,22 @@ class ReplicationProvider(BaseProvider):
         source_table_type = None
 
         try:
-            self.logger.info(
-                f"Starting replication: {source_table} -> {target_table}",
-                extra={"run_id": self.run_id, "operation": "replication"},
-            )
-
             # Check if source table exists
             if not self.spark.catalog.tableExists(source_table):
                 raise TableNotFoundError(f"Source table does not exist: {source_table}")
 
             # Get source table type to determine replication strategy
             source_table_type = self.db_ops.get_table_type(source_table)
-            is_external = source_table_type.upper() == "EXTERNAL"
+            if source_table_type.upper() == TableType.STREAMING_TABLE.upper():
+                backup_catalog = replication_config.backup_catalog
+                source_table = f"`{backup_catalog}`.`{schema_name}`.`{table_name}`"
+
+            self.logger.info(
+                f"Starting replication: {source_table} -> {target_table}",
+                extra={"run_id": self.run_id, "operation": "replication"},
+            )
+
+            is_external = source_table_type.upper() == TableType.EXTERNAL.upper()
 
             try:
                 table_details = self.db_ops.get_table_details(target_table)
@@ -271,9 +287,12 @@ class ReplicationProvider(BaseProvider):
             except TableNotFoundError as exc:
                 table_details = self.db_ops.get_table_details(source_table)
                 if table_details["is_dlt"]:
-                    raise TableNotFoundError(f"""
-                        Target table {target_table} does not exist. Cannot replicate DLT table without existing target.
-                        """) from exc
+                    msg = f"Target DLT table {target_table} must exist before replicating."
+                    self.logger.error(
+                        msg,
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
+                    raise TableNotFoundError(msg) from exc
                 dlt_flag = False
                 pipeline_id = None
                 actual_target_table = target_table
@@ -737,9 +756,9 @@ class ReplicationProvider(BaseProvider):
         if pipeline_id:
             # For dlt streaming tables/materialized views, use CREATE OR REPLACE TABLE with pipelineId property
             return f"{sql} TBLPROPERTIES ('pipelines.pipelineId'='{pipeline_id}')"
-        else:
-            # For regular tables, just return the deep clone query
-            return sql
+
+        # For regular tables, just return the deep clone query
+        return sql
 
     def _replicate_table_tags(
         self,

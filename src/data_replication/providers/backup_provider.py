@@ -10,7 +10,7 @@ from typing import List
 
 from data_replication.databricks_operations import DatabricksOperations
 
-from ..config.models import RunResult
+from ..config.models import RunResult, TableType
 from ..exceptions import BackupError
 from ..utils import (
     create_spark_session,
@@ -152,11 +152,14 @@ class BackupProvider(BaseProvider):
             )
 
         results = []
+        if backup_config.add_to_share:
+            schema_share_result = self._add_schema_to_shares(schema_name, backup_config)
+            results.append(schema_share_result)
 
-        schema_share_result = self._add_schema_to_shares(schema_name, backup_config)
-        results.append(schema_share_result)
-
-        if self.catalog_config.table_types != ["streaming_table"]:
+        if (
+            self.catalog_config.table_types
+            and TableType.STREAMING_TABLE not in self.catalog_config.table_types
+        ) or not self.catalog_config.table_types:
             self.logger.info(
                 f"""Skipping backup for schema {schema_name} as only streaming tables requires backup."""
             )
@@ -277,6 +280,13 @@ class BackupProvider(BaseProvider):
                 )
                 # Get source table type for audit logging
                 source_table_type = self.db_ops.get_table_type(source_table)
+
+                if source_table_type.upper() != TableType.STREAMING_TABLE.value.upper():
+                    self.logger.info(
+                        f"Skipping backup for table {source_table} of type {source_table_type}. Only streaming tables are backed up.",
+                        extra={"run_id": self.run_id, "operation": "backup"},
+                    )
+                    return
 
                 # Perform backup using deep clone and unset parentTableId property
                 backup_query = f"""CREATE OR REPLACE TABLE {backup_table}
