@@ -78,8 +78,8 @@ uc_object_types:
   ]
 
 # Optional: replication group level. can be overriden by catalog level or args
-# supported types: streaming_table, managed, external.
-table_types: ["streaming_table"]
+# supported types: all, streaming_table, managed, external.
+table_types: ["all","managed","streaming_table","external"]
 
 # Optional: replication group level. can be overriden by catalog level or args
 # supported volume types: managed, external.
@@ -183,9 +183,9 @@ reconciliation_config:
 target_catalogs:
   # Mandatory: target catalog name
   - catalog_name: "catalog_example"
-    # Optional at replication group level or catalog level: supported types: streaming_table, managed, external.
-    # streaming table can not be backed up and replicate with other table types together.
-    table_types: ["streaming_table"]
+    # Optional: cataloglevel.
+    # supported types: all, streaming_table, managed, external.
+    table_types: ["all","managed","streaming_table","external"]
     # Optional at replication group level or catalog level: supported volume types: managed, external.
     # Note: external volumes require external_location_mapping configuration above
     # supported volume types: managed, external.

@@ -709,6 +709,7 @@ class BaseProvider(ABC):
             schema_name,
             tables,
             self.catalog_config.table_types,
+            self.max_workers
         )
 
     def _get_volumes(

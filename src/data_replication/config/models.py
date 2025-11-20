@@ -24,6 +24,7 @@ class TableType(str, Enum):
     MANAGED = "managed"
     STREAMING_TABLE = "streaming_table"
     EXTERNAL = "external"
+    ALL = "all"
 
 
 class VolumeType(str, Enum):

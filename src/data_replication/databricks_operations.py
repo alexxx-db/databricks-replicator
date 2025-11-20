@@ -7,6 +7,7 @@ schemas, and tables.
 
 from typing import List, Tuple, Optional
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from databricks.connect import DatabricksSession
 from pyspark.sql.functions import col
@@ -216,14 +217,17 @@ class DatabricksOperations:
         schema_name: str,
         table_names: List[str],
         table_types: List[TableType],
+        max_workers: int = 4,
     ) -> List[str]:
         """
-        Filter a list of table names to only include selected types.
+        Filter a list of table names to only include selected types using multithreading.
 
         Args:
             catalog_name: Name of the catalog
             schema_name: Name of the schema
             table_names: List of table names to filter
+            table_types: List of table types to filter by
+            max_workers: Maximum number of threads to use for parallel processing
 
         Returns:
             List of table names that are of the selected types
@@ -232,14 +236,47 @@ class DatabricksOperations:
         if table_types is None or len(table_types) == 0:
             return table_names
 
-        return [
-            table
-            for table in table_names
-            if self.get_table_type(
-                f"`{catalog_name}`.`{schema_name}`.`{table}`"
-            ).lower()
-            in [type.lower() for type in table_types]
-        ]
+        if len(table_names) == 0:
+            return []
+
+        # Handle ALL table type by expanding to all concrete table types
+        expanded_types = []
+        for table_type in table_types:
+            if table_type.lower() == "all":
+                expanded_types.extend(["managed", "streaming_table", "external"])
+            else:
+                expanded_types.append(table_type.lower())
+        
+        # Remove duplicates while preserving order
+        allowed_types = list(dict.fromkeys(expanded_types))
+        
+        def check_table_type(table_name: str) -> tuple[str, bool]:
+            """Check if table type is in allowed types"""
+            try:
+                full_table_name = f"`{catalog_name}`.`{schema_name}`.`{table_name}`"
+                table_type = self.get_table_type(full_table_name).lower()
+                return table_name, table_type in allowed_types
+            except Exception:
+                # If we can't determine the type, exclude the table
+                return table_name, False
+
+        filtered_tables = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all table type checks
+            future_to_table = {
+                executor.submit(check_table_type, table_name): table_name
+                for table_name in table_names
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_table):
+                table_name, is_included = future.result()
+                if is_included:
+                    filtered_tables.append(table_name)
+        
+        return filtered_tables
 
     def get_all_schemas(self, catalog_name: str) -> List[str]:
         """
