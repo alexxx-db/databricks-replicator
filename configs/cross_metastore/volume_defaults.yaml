@@ -6,7 +6,7 @@
 
 version: "1.0"
 
-replication_group: "streaming_tables_defaults"
+replication_group: "volumes_defaults"
 
 source_databricks_connect_config:
   name: "azure"
@@ -36,16 +36,10 @@ replication_config:
   create_target_catalog: true
   create_shared_catalog: true
   volume_config:
-    # Optional: maximum concurrent file copies per volume. default is 10.
-    max_concurrent_copies: 10
     # Optional: autoloader options dictionary for streaming table replication
-    autoloader_options: null
-    # Optional: streaming timeout in seconds for streaming table replication. default is 43200 seconds (12 hours).
-    streaming_timeout_seconds: 7200
-    # Optional: detailed file ingestion logging outputs table name. default to same as audit catalog and schema
-    file_ingestion_logging_table: "detail_file_ingestion_logging"
-    # Optional: whether to delete existing target data and reload from source. default is false.
-    delete_and_reload: true
+    autoloader_options:
+      cloudFiles.maxFilesPerTrigger: "1000"
+      modifiedAfter: "2000-01-01T00:00:00.000Z"
 
 concurrency:
   max_workers: 1

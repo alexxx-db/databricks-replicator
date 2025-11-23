@@ -6,6 +6,7 @@ for the data replication system.
 """
 
 import argparse
+import json
 from pathlib import Path
 from typing import List
 
@@ -159,6 +160,27 @@ def validate_args(args) -> None:
                 "When table-filter-expression is provided, target-catalogs must also be provided"
             )
 
+    # Volume argument validation
+    if hasattr(args, 'volume_max_concurrent_copies') and args.volume_max_concurrent_copies is not None:
+        if not (1 <= args.volume_max_concurrent_copies <= 100):
+            raise ValueError(
+                f"volume-max-concurrent-copies must be between 1 and 100, got {args.volume_max_concurrent_copies}"
+            )
+
+    if hasattr(args, 'volume_streaming_timeout_secs') and args.volume_streaming_timeout_secs is not None:
+        if args.volume_streaming_timeout_secs < 60:
+            raise ValueError(
+                f"volume-streaming-timeout-secs must be at least 60 seconds, got {args.volume_streaming_timeout_secs}"
+            )
+
+    if hasattr(args, 'volume_autoloader_options') and args.volume_autoloader_options is not None:
+        try:
+            json.loads(args.volume_autoloader_options)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"volume-autoloader-options must be a valid JSON string: {e}"
+            ) from e
+
 
 def setup_argument_parser():
     """Setup and configure the command line argument parser."""
@@ -278,6 +300,44 @@ def setup_argument_parser():
         type=str,
         help="Target Databricks workspace URL to override config file setting. "
              "e.g. https://e2-demo-field-eng.cloud.databricks.com/",
+    )
+
+    parser.add_argument(
+        "--volume-max-concurrent-copies",
+        type=int,
+        help="Maximum concurrent file copies per volume (default: 10, range: 1-100)",
+    )
+
+    parser.add_argument(
+        "--volume-delete-and-reload",
+        type=str,
+        choices=["true", "false"],
+        help="Delete existing target data and reload from source (default: false). Accepts: true, false",
+    )
+
+    parser.add_argument(
+        "--volume-folder-path",
+        type=str,
+        help="Target folder path under the target volume to copy files to (default: root of target volume)",
+    )
+
+    parser.add_argument(
+        "--volume-delete-checkpoint",
+        type=str,
+        choices=["true", "false"],
+        help="Delete checkpoint data before starting volume replication (default: false). Accepts: true, false",
+    )
+
+    parser.add_argument(
+        "--volume-autoloader-options",
+        type=str,
+        help="JSON string of autoloader options for volume replication, e.g. '{\"cloudFiles.maxFilesPerTrigger\": \"1000\"}'",
+    )
+
+    parser.add_argument(
+        "--volume-streaming-timeout-secs",
+        type=int,
+        help="Streaming timeout in seconds for volume replication (default: 43200, minimum: 60)",
     )
 
     return parser

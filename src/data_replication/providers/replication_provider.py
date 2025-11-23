@@ -6,7 +6,6 @@ streaming tables, materialized views, and intermediate catalogs.
 """
 
 from datetime import datetime, timezone
-import shutil
 from typing import List
 
 from data_replication.databricks_operations import DatabricksOperations
@@ -27,7 +26,7 @@ from ..utils import (
     retry_with_logging,
     create_spark_session,
     validate_spark_session,
-    create_workspace_client
+    create_workspace_client,
 )
 from .base_provider import BaseProvider
 
@@ -508,15 +507,16 @@ class ReplicationProvider(BaseProvider):
         target_catalog = self.catalog_config.catalog_name
         source_volume = f"`{source_catalog}`.`{schema_name}`.`{volume_name}`"
         target_volume = f"`{target_catalog}`.`{schema_name}`.`{volume_name}`"
-        source_path = f"/Volumes/{source_catalog}/{schema_name}/{volume_name}/"
-        target_path = f"/Volumes/{target_catalog}/{schema_name}/{volume_name}/"
-        checkpoint_path = f"{target_path}_checkpoints/"
+        source_path = f"/Volumes/{source_catalog}/{schema_name}/{volume_name}"
+        target_path = f"/Volumes/{target_catalog}/{schema_name}/{volume_name}"
+        checkpoint_path = f"{target_path}/_checkpoints"
 
+        checkpoint_subfolder = volume_config.folder_path.strip('/') if volume_config.folder_path else "root"
         if volume_config.folder_path:
             source_path = f"{source_path}/{volume_config.folder_path.strip('/')}/"
             target_path = f"{target_path}/{volume_config.folder_path.strip('/')}/"
             checkpoint_path = (
-                f"{checkpoint_path}{volume_config.folder_path.strip('/')}/"
+                f"{checkpoint_path}/{checkpoint_subfolder}/"
             )
 
         # create detail ingestion logging catalog and schema if not exists
@@ -531,6 +531,13 @@ class ReplicationProvider(BaseProvider):
             volume_config.file_ingestion_logging_schema,
         )
         detail_ingestion_logging_table = f"`{volume_config.file_ingestion_logging_catalog}`.`{volume_config.file_ingestion_logging_schema}`.`{volume_config.file_ingestion_logging_table}`"
+        # Prepare autoloader read options
+        read_options_always = {
+            "cloudFiles.format": "binaryFile",
+        }
+        read_options = read_options_always
+        if volume_config.autoloader_options:
+            read_options = {**volume_config.autoloader_options, **read_options_always}
 
         # Extract variables that will be used in the foreachBatch function to avoid serialization issues
         run_id = self.run_id
@@ -566,6 +573,7 @@ class ReplicationProvider(BaseProvider):
             "checkpoint_path": checkpoint_path,
             "delete_and_reload": volume_config.delete_and_reload,
             "error_count": error_count,
+            "autoloader_options": read_options,
         }
         try:
             # Check if source table exists
@@ -583,22 +591,7 @@ class ReplicationProvider(BaseProvider):
                 extra={"run_id": self.run_id, "operation": "replication"},
             )
 
-            if volume_config.delete_and_reload:
-                try:
-                    self.logger.info(f"Deleting target directory: {target_path}")
-                    self.target_workspace_client.dbutils.fs.rm(target_path, True)
-                    self.logger.info(f"Directory {target_path} removed successfully")
-                except FileNotFoundError:
-                    self.logger.warning(f"Directory does not exist: {target_path}")
-                except PermissionError:
-                    self.logger.error(
-                        f"Permission denied when trying to remove directory: {target_path}"
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        f"An error occurred when trying to remove directory: {target_path}: {str(e)}"
-                    )
-            if volume_config.delete_checkpoint:
+            if volume_config.delete_checkpoint or volume_config.delete_and_reload:
                 try:
                     self.logger.info(
                         f"Deleting checkpoint directory: {checkpoint_path}"
@@ -607,15 +600,18 @@ class ReplicationProvider(BaseProvider):
                     self.logger.info(
                         f"Directory {checkpoint_path} removed successfully"
                     )
-                except FileNotFoundError:
-                    self.logger.warning(f"Directory does not exist: {checkpoint_path}")
-                except PermissionError:
-                    self.logger.error(
-                        f"Permission denied when trying to remove directory: {checkpoint_path}"
-                    )
                 except Exception as e:
-                    self.logger.error(
+                    self.logger.warning(
                         f"An error occurred when trying to remove directory: {checkpoint_path}: {str(e)}"
+                    )
+            if volume_config.delete_and_reload:
+                try:
+                    self.logger.info(f"Deleting target directory: {target_path}")
+                    self.target_workspace_client.dbutils.fs.rm(target_path, True)
+                    self.logger.info(f"Directory {target_path} removed successfully")
+                except Exception as e:
+                    self.logger.warning(
+                        f"An error occurred when trying to remove directory: {target_path}: {str(e)}"
                     )
 
             if volume_config.streaming_timeout_seconds:
@@ -623,17 +619,6 @@ class ReplicationProvider(BaseProvider):
                     "spark.databricks.execution.timeout",
                     volume_config.streaming_timeout_seconds,
                 )
-
-            read_options_always = {
-                "cloudFiles.format": "binaryFile",
-            }
-
-            if volume_config.autoloader_options:
-                read_options = volume_config.autoloader_options.update(
-                    read_options_always
-                )
-            else:
-                read_options = read_options_always
 
             # Use custom retry decorator with logging
             @retry_with_logging(self.retry, self.logger)
@@ -644,6 +629,7 @@ class ReplicationProvider(BaseProvider):
                 checkpoint_path: str,
                 logging_table: str,
                 max_workers: int,
+                read_options: dict,
             ):
                 try:
                     df = (
@@ -671,7 +657,7 @@ class ReplicationProvider(BaseProvider):
                                 rel_path = src_file_path.replace(
                                     source_path, "", 1
                                 ).lstrip("/")
-                                dst_file_path = target_path + rel_path
+                                dst_file_path = f"{target_path}/{rel_path}"
 
                                 dst_dir = "/".join(dst_file_path.split("/")[:-1])
                                 os.makedirs(dst_dir, exist_ok=True)
@@ -756,6 +742,7 @@ class ReplicationProvider(BaseProvider):
                 checkpoint_path=checkpoint_path,
                 logging_table=detail_ingestion_logging_table,
                 max_workers=volume_config.max_concurrent_copies,
+                read_options=read_options,
             )
 
             end_time = datetime.now(timezone.utc)
@@ -776,14 +763,15 @@ class ReplicationProvider(BaseProvider):
             )
 
             if result:
-                error_rate = (
-                    details['error_count'] / details['total_count']
-                    if details['total_count'] > 0 else 0
+                success_rate = (
+                    (details["total_count"] - details["error_count"]) / details["total_count"]
+                    if details["total_count"] > 0
+                    else 0
                 )
                 self.logger.info(
                     f"Replication completed successfully: {source_path} -> {target_path} "
-                    f"(errors: {details['error_count']}/{details['total_count']}) "
-                    f"error_rate: {error_rate:.2%} "
+                    f"(success: {details['total_count'] - details['error_count']}/{details['total_count']}) "
+                    f"success_rate: {success_rate:.2%} "
                     f"({duration:.2f}s)",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )

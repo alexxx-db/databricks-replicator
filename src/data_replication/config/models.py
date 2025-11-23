@@ -5,10 +5,12 @@ This module defines all the configuration models that validate and parse
 the YAML configuration file for the data replication system.
 """
 
+from copy import deepcopy
 from enum import Enum
 from typing import List, Optional
-
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from data_replication.utils import merge_models_recursive
 
 
 class ExecuteAt(str, Enum):
@@ -143,23 +145,6 @@ class VolumeConfig(BaseModel):
         return v.lower() if v else v
 
 
-class SchemaConfig(BaseModel):
-    """Configuration for individual schemas."""
-
-    schema_name: str
-    tables: Optional[List[TableConfig]] = None
-    exclude_tables: Optional[List[TableConfig]] = None
-    table_filter_expression: Optional[str] = None
-    volumes: Optional[List[VolumeConfig]] = None
-    exclude_volumes: Optional[List[VolumeConfig]] = None
-
-    @field_validator("schema_name")
-    @classmethod
-    def validate_schema_name(cls, v):
-        """Convert schema name to lowercase."""
-        return v.lower() if v else v
-
-
 class BackupConfig(BaseModel):
     """Configuration for backup operations."""
 
@@ -241,6 +226,29 @@ class ReconciliationConfig(BaseModel):
         return v.lower() if v else v
 
 
+class SchemaConfig(BaseModel):
+    """Configuration for individual schemas."""
+
+    schema_name: str
+    tables: Optional[List[TableConfig]] = None
+    table_types: Optional[List[TableType]] = None
+    volume_types: Optional[List[VolumeType]] = None
+    uc_object_types: Optional[List[UCObjectType]] = None
+    exclude_tables: Optional[List[TableConfig]] = None
+    table_filter_expression: Optional[str] = None
+    volumes: Optional[List[VolumeConfig]] = None
+    exclude_volumes: Optional[List[VolumeConfig]] = None
+    backup_config: Optional[BackupConfig] = None
+    replication_config: Optional[ReplicationConfig] = None
+    reconciliation_config: Optional[ReconciliationConfig] = None
+
+    @field_validator("schema_name")
+    @classmethod
+    def validate_schema_name(cls, v):
+        """Convert schema name to lowercase."""
+        return v.lower() if v else v
+
+
 class TargetCatalogConfig(BaseModel):
     """Configuration for target catalogs."""
 
@@ -313,7 +321,7 @@ class VolumeFilesReplicationConfig(BaseModel):
     file_ingestion_logging_catalog: Optional[str] = None
     file_ingestion_logging_catalog_location: Optional[str] = None
     file_ingestion_logging_schema: Optional[str] = None
-    file_ingestion_logging_table: Optional[str] = None
+    file_ingestion_logging_table: Optional[str] = 'detail_file_ingestion_logging'
 
 
 class RetryConfig(BaseModel):
@@ -352,91 +360,46 @@ class ReplicationSystemConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
+    def merge_configs(self):
+        """Merge catalog-level configs into system-level config."""
+        if self.target_catalogs:
+            for i, catalog in enumerate(self.target_catalogs):
+                self.target_catalogs[i] = merge_models_recursive(
+                    deepcopy(self), catalog
+                )
+        return self
+
+    @model_validator(mode="after")
     def set_table_types(self):
-        """Merge catalog-level table types into system-level config and expand 'all' type"""
+        """Set default table types and expand 'all' type"""
         # Expand system-level table_types if it contains "all"
         if self.table_types and TableType.ALL in self.table_types:
-            self.table_types = [TableType.MANAGED, TableType.EXTERNAL, TableType.STREAMING_TABLE]
-        
+            self.table_types = [
+                TableType.MANAGED,
+                TableType.EXTERNAL,
+                TableType.STREAMING_TABLE,
+            ]
+
         for catalog in self.target_catalogs:
-            if self.table_types is not None and catalog.table_types is None:
-                catalog.table_types = self.table_types
-            
             # Expand catalog-level table_types if it contains "all"
             if catalog.table_types and TableType.ALL in catalog.table_types:
-                catalog.table_types = [TableType.MANAGED, TableType.EXTERNAL, TableType.STREAMING_TABLE]
+                catalog.table_types = [
+                    TableType.MANAGED,
+                    TableType.EXTERNAL,
+                    TableType.STREAMING_TABLE,
+                ]
         return self
 
     @model_validator(mode="after")
-    def set_volume_types(self):
-        """Merge catalog-level volume types into system-level config"""
-        for catalog in self.target_catalogs:
-            if self.volume_types is not None and catalog.volume_types is None:
-                catalog.volume_types = self.volume_types
-        return self
-
-    @model_validator(mode="after")
-    def set_uc_object_types(self):
-        """Merge catalog-level UC object types into system-level config"""
-        for catalog in self.target_catalogs:
-            if self.uc_object_types is not None and catalog.uc_object_types is None:
-                catalog.uc_object_types = self.uc_object_types
-        return self
-
-    @model_validator(mode="after")
-    def set_backup_defaults(self):
-        """Merge catalog-level backup configs into system-level config"""
-        for catalog in self.target_catalogs:
-            if catalog.backup_config:
-                # Merge system-level config into catalog config (catalog takes precedence)
-                if self.backup_config:
-                    system_dict = self.backup_config.model_dump()
-                    catalog_dict = catalog.backup_config.model_dump()
-
-                    # Merge: system values as base, catalog values override
-                    merged_dict = {
-                        **system_dict,
-                        **{k: v for k, v in catalog_dict.items() if v is not None},
-                    }
-                    catalog.backup_config = BackupConfig(**merged_dict)
-                # If no system config, catalog config stays as is
-            else:
-                # If catalog has no backup_config, use system-level config
-                if self.backup_config:
-                    catalog.backup_config = BackupConfig(
-                        **self.backup_config.model_dump()
-                    )
-
-        return self
-
-    @model_validator(mode="after")
-    def set_replication_defaults(self):
-        """Merge catalog-level replication configs into system-level config"""
+    def set_file_ingestion_logging_defaults(self):
+        """Set default file ingestion logging catalog and schema from audit_config."""
         # Extract catalog and schema from audit_table
         audit_parts = self.audit_config.audit_table.split(".")
         audit_catalog = audit_parts[0]
         audit_schema = audit_parts[1]
 
         for catalog in self.target_catalogs:
-            if catalog.replication_config:
-                # Merge system-level config into catalog config (catalog takes precedence)
-                if self.replication_config:
-                    system_dict = self.replication_config.model_dump()
-                    catalog_dict = catalog.replication_config.model_dump()
-
-                    # Merge: system values as base, catalog values override
-                    merged_dict = {
-                        **system_dict,
-                        **{k: v for k, v in catalog_dict.items() if v is not None},
-                    }
-                    catalog.replication_config = ReplicationConfig(**merged_dict)
-                # If no system config, catalog config stays as is
-            else:
-                if self.replication_config:
-                    catalog.replication_config = ReplicationConfig(
-                        **self.replication_config.model_dump()
-                    )
-            if catalog.replication_config:
+            if catalog.replication_config and catalog.replication_config.volume_config:
                 if (
                     catalog.replication_config.volume_config.file_ingestion_logging_catalog
                     is None
@@ -452,8 +415,9 @@ class ReplicationSystemConfig(BaseModel):
 
     @model_validator(mode="after")
     def set_reconciliation_defaults(self):
-        """Set default recon_outputs_catalog and recon_outputs_schema from audit_config.
-        Merge catalog-level reconciliation configs into system-level config"""
+        """
+        Set default recon_outputs_catalog and recon_outputs_schema from audit_config.
+        """
         # Extract catalog and schema from audit_table
         audit_parts = self.audit_config.audit_table.split(".")
         audit_catalog = audit_parts[0]
@@ -475,24 +439,6 @@ class ReplicationSystemConfig(BaseModel):
 
         # Merge catalog-level reconciliation configs into system-level config
         for catalog in self.target_catalogs:
-            if catalog.reconciliation_config:
-                # Merge system-level config into catalog config (catalog takes precedence)
-                if self.reconciliation_config:
-                    system_dict = self.reconciliation_config.model_dump()
-                    catalog_dict = catalog.reconciliation_config.model_dump()
-
-                    # Merge: system values as base, catalog values override
-                    merged_dict = {
-                        **system_dict,
-                        **{k: v for k, v in catalog_dict.items() if v is not None},
-                    }
-                    catalog.reconciliation_config = ReconciliationConfig(**merged_dict)
-                # If no system config, catalog config stays as is
-            else:
-                if self.reconciliation_config:
-                    catalog.reconciliation_config = ReconciliationConfig(
-                        **self.reconciliation_config.model_dump()
-                    )
             if catalog.reconciliation_config:
                 if catalog.reconciliation_config.recon_outputs_catalog is None:
                     catalog.reconciliation_config.recon_outputs_catalog = audit_catalog
@@ -542,7 +488,6 @@ class ReplicationSystemConfig(BaseModel):
             replace_in_object(catalog.backup_config, catalog.catalog_name)
             replace_in_object(catalog.replication_config, catalog.catalog_name)
             replace_in_object(catalog.reconciliation_config, catalog.catalog_name)
-            # print(catalog)
 
         return self
 

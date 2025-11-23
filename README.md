@@ -142,16 +142,19 @@ data-replicator --help
 data-replicator <config.yaml> --validate-only
 
 # Replicate delta tables for specific schemas
-data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalog aaron_replication --target-schemas bronze_1,silver_1
+data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
 
 # Replicate streaming tables for specific catalog
-data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalog aaron_replication
+data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalogs aaron_replication,aaron_replication_2
+
+# Replicate volume for specific schema
+data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
 
 # Replicate uc metadata - tags
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalog aaron_replication --uc-object-types table_tag,column_tag,catalog_tag,schema_tag,volume_tag
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types table_tag,column_tag,catalog_tag,schema_tag,volume_tag
 
 # Replicate uc metadata - column comment
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalog aaron_replication --uc-object-types column_comment
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types column_comment
 ```
 
 5. Deploy - the tool can be deployed as Workflow Job using DAB. Check resources folder
@@ -164,4 +167,3 @@ databricks bundle deploy
 ## License
 
 This project is proprietary to Databricks.
->>>>>>> main

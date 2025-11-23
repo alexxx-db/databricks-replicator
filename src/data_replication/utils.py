@@ -5,24 +5,23 @@ This module provides retry functionality with exponential backoff
 and configurable retry strategies.
 """
 
+from copy import deepcopy
 import os
 import time
 from functools import wraps
-from typing import Optional
+from typing import Dict, Any, TypeVar, Optional
 from tenacity import retry, wait_exponential, stop_after_attempt
-
+from pydantic import BaseModel
 from databricks.connect import DatabricksSession
 from databricks.sdk import WorkspaceClient
-from .audit.logger import DataReplicationLogger
-from .config.models import AuthType, RetryConfig, SecretConfig
+
+T = TypeVar("T", bound=BaseModel)
 
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=10, max=60))
-def get_token_from_secret(
-    secret_config: SecretConfig, workspace_client: WorkspaceClient, auth_type: AuthType
-):
+def get_token_from_secret(secret_config, workspace_client, auth_type):
     """Retrieve the authentication token from Databricks secrets."""
-    if auth_type == AuthType.OAUTH:
+    if auth_type.lower() == "oauth":
         client_id = workspace_client.dbutils.secrets.get(
             secret_config.secret_scope,
             secret_config.secret_client_id,
@@ -41,10 +40,10 @@ def get_token_from_secret(
 
 def set_envs(
     host: str,
-    secret_config: SecretConfig = None,
-    cluster_id: str = None,
-    workspace_client: WorkspaceClient = None,
-    auth_type: AuthType = None,
+    secret_config=None,
+    cluster_id=None,
+    workspace_client=None,
+    auth_type=None,
 ):
     """Set environment variables for Databricks connection."""
     if not host:
@@ -60,7 +59,7 @@ def set_envs(
     client_secret = None
     pat = None
     if secret_config:
-        if auth_type == AuthType.OAUTH:
+        if auth_type.lower() == "oauth":
             client_id, client_secret = get_token_from_secret(
                 secret_config, workspace_client, auth_type
             )
@@ -77,10 +76,10 @@ def set_envs(
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=10, max=60))
 def create_spark_session(
     host: str,
-    secret_config: SecretConfig = None,
-    cluster_id: str = None,
-    workspace_client: WorkspaceClient = None,
-    auth_type: AuthType = None,
+    secret_config=None,
+    cluster_id=None,
+    workspace_client=None,
+    auth_type=None,
 ) -> DatabricksSession:
     """Create a Databricks Spark session using the provided host and token."""
     set_envs(
@@ -104,9 +103,9 @@ def create_spark_session(
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=10, max=60))
 def create_workspace_client(
     host: str,
-    secret_config: SecretConfig = None,
-    workspace_client: WorkspaceClient = None,
-    auth_type: AuthType = None,
+    secret_config=None,
+    workspace_client=None,
+    auth_type=None,
 ) -> WorkspaceClient:
     """Create a Databricks workspace client using the provided host and token."""
 
@@ -144,9 +143,7 @@ def get_workspace_url_from_host(host: str) -> str:
     return host.replace("https://", "").replace("http://", "").split("/")[0]
 
 
-def retry_with_logging(
-    retry_config: RetryConfig, logger: Optional[DataReplicationLogger] = None
-):
+def retry_with_logging(retry_config, logger=None):
     """
     Decorator for retrying operations with logging.
 
@@ -238,3 +235,123 @@ def filter_common_maps(source_maps: list, target_maps: list) -> tuple:
     source_maps = [d for d in source_maps if frozenset(d.items()) not in common]
     target_maps = [d for d in target_maps if frozenset(d.items()) not in common]
     return source_maps, target_maps
+
+
+def merge_dicts_recursive(
+    base_dict: Dict[str, Any], update_dict: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Recursively merge two dictionaries, considering update fields set.
+
+    Args:
+        base_dict: The base dictionary to merge into
+        update_dict: The dictionary containing updates to merge
+
+    Returns:
+        A new merged dictionary
+
+    Notes:
+        - Values from update_dict take precedence over base_dict
+        - Values in update_dict are ignored if not in update_fields_set
+        - Nested dictionaries are recursively merged
+        - Lists are replaced entirely (not merged element-wise)
+    """
+    if base_dict is None and update_dict is None:
+        return None
+    if base_dict is None:
+        return {k: v for k, v in update_dict.items() if v is not None}
+    if update_dict is None:
+        return base_dict.copy()
+    for key in update_dict:
+        if (
+            key in base_dict
+            and isinstance(base_dict.get(key, None), dict)
+            and isinstance(update_dict.get(key, None), dict)
+        ):
+            merge_dicts_recursive(base_dict[key], update_dict[key])
+        elif (
+            key in base_dict
+            and issubclass(type(base_dict.get(key, None)), BaseModel)
+            and issubclass(type(update_dict.get(key, None)), BaseModel)
+        ):
+            merge_models_recursive(base_dict.get(key, None), update_dict.get(key, None))
+        else:
+            if base_dict.get(key, None) is not None:
+                base_dict[key] = (
+                    update_dict[key]
+                    if update_dict.get(key, None) is not None
+                    else base_dict[key]
+                )
+            elif update_dict.get(key, None) is not None:
+                base_dict[key] = update_dict[key]
+    return base_dict
+
+
+def merge_models_recursive(
+    base_model: Optional[BaseModel],
+    update_model: Optional[BaseModel],
+) -> Optional[T]:
+    """
+    Merge two Pydantic models recursively, ignoring None values.
+
+    Args:
+        base_model: The base model to merge into (can be None)
+        update_model: The model containing updates to merge (can be None)
+        model_type: The Pydantic model class type
+
+    Returns:
+        A new merged model instance, or None if both inputs are None
+    """
+    if base_model is None and update_model is None:
+        return None
+
+    model_type = type(update_model)
+    if base_model is None:
+        return model_type(**update_model.model_dump())
+    if update_model is None:
+        return model_type(**base_model.model_dump())
+    base_model_copy = deepcopy(base_model)
+    base_model = model_type.model_construct(**base_model.model_dump())
+    for field_name, _ in update_model:
+        if (
+            field_name in base_model_copy.model_fields_set
+            and issubclass(type(getattr(base_model_copy, field_name, None)), BaseModel)
+            and issubclass(type(getattr(update_model, field_name, None)), BaseModel)
+        ):
+            setattr(
+                base_model,
+                field_name,
+                merge_models_recursive(
+                    getattr(base_model_copy, field_name, None),
+                    getattr(update_model, field_name, None),
+                ),
+            )
+        elif (
+            field_name in base_model_copy.model_fields_set
+            and isinstance(getattr(base_model_copy, field_name, None), dict)
+            and isinstance(getattr(update_model, field_name, None), dict)
+        ):
+            setattr(
+                base_model,
+                field_name,
+                merge_dicts_recursive(
+                    getattr(base_model_copy, field_name, None),
+                    getattr(update_model, field_name, None),
+                ),
+            )
+        else:
+            if getattr(base_model_copy, field_name, None) is not None:
+                setattr(
+                    base_model,
+                    field_name,
+                    (
+                        getattr(update_model, field_name, None)
+                        if field_name in update_model.model_fields_set
+                        else getattr(base_model_copy, field_name, None)
+                    ),
+                )
+            elif getattr(update_model, field_name, None) is not None:
+                setattr(base_model, field_name, getattr(update_model, field_name, None))
+
+    # Create and return new model instance
+    return base_model

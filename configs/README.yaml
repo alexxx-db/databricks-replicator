@@ -168,7 +168,7 @@ replication_config:
     file_ingestion_logging_catalog_location: null
     # Optional: detailed file ingestion logging outputs schema name. default to same as audit schema.
     file_ingestion_logging_schema: "audit"
-    # Optional: detailed file ingestion logging outputs schema name. default to same as audit schema.
+    # Optional: detailed file ingestion logging outputs schema name. default to detail_file_ingestion_logging.
     file_ingestion_logging_table: "detail_file_ingestion_logging"
 
 # Optional: reconciliation configuration (at replication group level)
