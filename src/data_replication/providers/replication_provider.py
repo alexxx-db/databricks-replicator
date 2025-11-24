@@ -336,7 +336,7 @@ class ReplicationProvider(BaseProvider):
                 return True
 
             # Determine replication strategy based on table type and config
-            if is_external:
+            if is_external and not replication_config.replicate_as_managed:
                 # External tables: always use direct replication (ignore intermediate catalog)
                 if replication_config.intermediate_catalog:
                     self.logger.info(

@@ -185,6 +185,7 @@ class ReplicationConfig(BaseModel):
     enforce_schema: Optional[bool] = True
     overwrite_tags: Optional[bool] = True
     overwrite_comments: Optional[bool] = True
+    replicate_as_managed: Optional[bool] = False
     copy_files: Optional[bool] = True
     volume_config: Optional["VolumeFilesReplicationConfig"] = None
 
