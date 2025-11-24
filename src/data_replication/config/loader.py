@@ -417,21 +417,21 @@ class ConfigLoader:
                 if "replication_config" not in catalog:
                     catalog["replication_config"] = {}
                 
-                # Create volume_config if it doesn't exist
-                if "volume_config" not in catalog["replication_config"]:
-                    catalog["replication_config"]["volume_config"] = {}
+                # Get existing volume_config or create empty dict
+                existing_volume_config = catalog["replication_config"].get("volume_config", {})
                 
-                # Apply overrides
-                for key, value in volume_overrides.items():
-                    catalog["replication_config"]["volume_config"][key] = value
+                # Merge overrides with existing config (overrides take precedence)
+                merged_volume_config = merge_dicts_recursive(existing_volume_config, volume_overrides)
+                catalog["replication_config"]["volume_config"] = merged_volume_config
 
         # Apply volume overrides to system level replication config if it exists
         if volume_overrides and "replication_config" in config_data:
-            if "volume_config" not in config_data["replication_config"]:
-                config_data["replication_config"]["volume_config"] = {}
+            # Get existing volume_config or create empty dict
+            existing_volume_config = config_data["replication_config"].get("volume_config", {})
             
-            for key, value in volume_overrides.items():
-                config_data["replication_config"]["volume_config"][key] = value
+            # Merge overrides with existing config (overrides take precedence)
+            merged_volume_config = merge_dicts_recursive(existing_volume_config, volume_overrides)
+            config_data["replication_config"]["volume_config"] = merged_volume_config
 
         try:
             config = ReplicationSystemConfig(**config_data)

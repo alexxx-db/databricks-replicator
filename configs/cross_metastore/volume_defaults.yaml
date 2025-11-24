@@ -39,7 +39,7 @@ replication_config:
     # Optional: autoloader options dictionary for streaming table replication
     autoloader_options:
       cloudFiles.maxFilesPerTrigger: "1000"
-      modifiedAfter: "2000-01-01T00:00:00.000Z"
+      modifiedAfter: "2100-01-01T00:00:00.000Z"
     # Optional: if true, will delete target files and checkpoints before replication
     delete_and_reload: false
     # Optional: file ingestion logging table configuration
