@@ -140,6 +140,12 @@ class ReplicationProvider(BaseProvider):
                         replication_config.backup_share_name,
                     )
 
+            if replication_config.volume_config:
+                # create file ingestion logging table if not exists
+                self._create_file_ingestion_logging_table(
+                    replication_config.volume_config
+                )
+
         return replication_config.source_catalog
 
     def process_schema_concurrently(
@@ -489,6 +495,43 @@ class ReplicationProvider(BaseProvider):
                 max_attempts=max_attempts,
             )
 
+    def _create_file_ingestion_logging_table(self, volume_config) -> None:
+        """Create file ingestion logging table if not exists."""
+        # create detail ingestion logging catalog and schema if not exists
+        if volume_config.create_file_ingestion_logging_catalog:
+            self.db_ops.create_catalog_if_not_exists(
+                volume_config.file_ingestion_logging_catalog,
+                volume_config.file_ingestion_logging_catalog_location,
+            )
+
+        self.db_ops.create_schema_if_not_exists(
+            volume_config.file_ingestion_logging_catalog,
+            volume_config.file_ingestion_logging_schema,
+        )
+        detail_ingestion_logging_table = f"`{volume_config.file_ingestion_logging_catalog}`.`{volume_config.file_ingestion_logging_schema}`.`{volume_config.file_ingestion_logging_table}`"
+
+        # create detail ingestion logging table if not exists
+        self.logger.info(
+            f"Creating detail ingestion logging table: {detail_ingestion_logging_table}"
+        )
+        # create detail ingestion logging table if not exists
+        self.spark.sql(f"""
+            create table if not exists {detail_ingestion_logging_table} (
+            run_id string,
+            source_path String,
+            target_path string,
+            ingestion_time timestamp,
+            length bigint,
+            file_modification_time timestamp,
+            status string,
+            error_msg string,
+            batch_id string
+        )
+        """)
+        self.logger.info(
+            f"File ingestion details are logged in: {detail_ingestion_logging_table}"
+        )
+
     def _replicate_volume(self, schema_name: str, volume_name: str) -> List[RunResult]:
         """
         Replicate a single volume.
@@ -511,6 +554,7 @@ class ReplicationProvider(BaseProvider):
         source_path = f"/Volumes/{source_catalog}/{schema_name}/{volume_name}"
         target_path = f"/Volumes/{target_catalog}/{schema_name}/{volume_name}"
         checkpoint_path = f"{target_path}/_checkpoints"
+        detail_ingestion_logging_table = f"`{volume_config.file_ingestion_logging_catalog}`.`{volume_config.file_ingestion_logging_schema}`.`{volume_config.file_ingestion_logging_table}`"
 
         checkpoint_subfolder = (
             volume_config.folder_path.strip("/")
@@ -522,18 +566,6 @@ class ReplicationProvider(BaseProvider):
             target_path = f"{target_path}/{volume_config.folder_path.strip('/')}/"
             checkpoint_path = f"{checkpoint_path}/{checkpoint_subfolder}/"
 
-        # create detail ingestion logging catalog and schema if not exists
-        if volume_config.create_file_ingestion_logging_catalog:
-            self.db_ops.create_catalog_if_not_exists(
-                volume_config.file_ingestion_logging_catalog,
-                volume_config.file_ingestion_logging_catalog_location,
-            )
-
-        self.db_ops.create_schema_if_not_exists(
-            volume_config.file_ingestion_logging_catalog,
-            volume_config.file_ingestion_logging_schema,
-        )
-        detail_ingestion_logging_table = f"`{volume_config.file_ingestion_logging_catalog}`.`{volume_config.file_ingestion_logging_schema}`.`{volume_config.file_ingestion_logging_table}`"
         # Prepare autoloader read options
         read_options_always = {
             "cloudFiles.format": "binaryFile",
@@ -544,26 +576,6 @@ class ReplicationProvider(BaseProvider):
 
         # Extract variables that will be used in the foreachBatch function to avoid serialization issues
         run_id = self.run_id
-        self.logger.info(
-            f"Creating detail ingestion logging table: {detail_ingestion_logging_table}"
-        )
-        # create detail ingestion logging table if not exists
-        self.spark.sql(f"""
-            create table if not exists {detail_ingestion_logging_table} (
-            run_id string,
-            source_path String,
-            target_path string,
-            ingestion_time timestamp,
-            length bigint,
-            file_modification_time timestamp,
-            status string,
-            error_msg string,
-            batch_id string
-        )
-        """)
-        self.logger.info(
-            f"File ingestion details are logged in: {detail_ingestion_logging_table}"
-        )
 
         attempt = 1
         max_attempts = self.retry.max_attempts
@@ -590,7 +602,7 @@ class ReplicationProvider(BaseProvider):
             details["volume_type"] = volume_type
 
             self.logger.info(
-                f"Starting replication: {source_path} -> {target_path}",
+                f"Starting replication: {source_path} -> {target_path} at checkpoint: {checkpoint_path}",
                 extra={"run_id": self.run_id, "operation": "replication"},
             )
 
