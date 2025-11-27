@@ -617,6 +617,13 @@ class ReconciliationProvider(BaseProvider):
 
             mismatch_count = mismatch_count_df.collect()[0]["mismatch_count"]
 
+            if mismatch_count > 0:
+                self.logger.info(
+                    f"{mismatch_count} schema mismatches found for {source_table} vs {target_table}",
+                    f"mismatches are recorded in {schema_comparison_table}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )
+
             return {
                 "passed": mismatch_count == 0,
                 "mismatch_count": mismatch_count,
@@ -681,6 +688,12 @@ class ReconciliationProvider(BaseProvider):
 
             # Get the comparison result directly
             comparison_result = result.collect()[0]
+
+            if comparison_result["row_count_diff"] > 0:
+                self.logger.info(
+                    f"{comparison_result['row_count_diff']} row count mismatches found for {source_table} vs {target_table}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )
 
             return {
                 "passed": comparison_result["comparison_result"] == "match",
@@ -873,6 +886,13 @@ class ReconciliationProvider(BaseProvider):
             missing_breakdown = {
                 row["issue_type"]: row["row_count"] for row in comparison_results
             }
+
+            if total_missing > 0:
+                self.logger.info(
+                    f"{total_missing} mismatches found for {source_table} vs {target_table}",
+                    f"mismatches are recorded in {missing_data_table}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )            
 
             return {
                 "passed": total_missing == 0,
