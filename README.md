@@ -11,26 +11,25 @@ This system provides incremental data and UC metadata replication capabilities b
 ## Supported Object Types
 - Data Replication
   - Streaming Tables (data only, no checkpoints)
-  - Managed Table
-  - External Table
+  - Managed Tables
+  - External Tables
+  - Volume Files
 - UC metadata
+  - Catalogs
+  - Schemas- 
   - Tags (catalog, schema, table, columns, views, volume)
   - Column Comments
   
 ## WIP
-- Data Replication
-  - Volume Files
 - UC metadata
   - Storage Credentials
-  - External Location
-  - Catalog
-  - Schema
+  - External Locations
   - Views
-  - Volume
+  - Volumes
   - Permissions
+  - Materialized Views
 
 ## Unsupported Object Types
-- Materialized Views
 - Streaming checkpoints
 
 ## Supported Operation Types
@@ -142,17 +141,23 @@ data-replicator --help
 # Validate configuration without running
 data-replicator <config.yaml> --validate-only
 
-# Replicate delta tables for specific schemas
-data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalog aaron_replication --target-schemas bronze_1,silver_1
+# Replicate catalog and schema
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types catalog,schema,catalog_tag,schema_tag
 
-# Replicate streaming tables for specific catalog
-data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalog aaron_replication
+# Replicate delta tables for specific schemas
+data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
+
+# Replicate streaming tables for specific catalog - streaming tables must already exist in target
+data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
+
+# Replicate volume for specific schema
+data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
 
 # Replicate uc metadata - tags
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalog aaron_replication --uc-object-types table_tag,column_tag,catalog_tag,schema_tag,volume_tag
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types table_tag,column_tag,catalog_tag,schema_tag,volume_tag
 
 # Replicate uc metadata - column comment
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalog aaron_replication --uc-object-types column_comment
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types column_comment
 ```
 
 5. Deploy - the tool can be deployed as Workflow Job using DAB. Check resources folder

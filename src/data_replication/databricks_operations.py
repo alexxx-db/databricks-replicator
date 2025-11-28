@@ -7,8 +7,10 @@ schemas, and tables.
 
 from typing import List, Tuple, Optional
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from databricks.connect import DatabricksSession
+from databricks.sdk import WorkspaceClient
 from pyspark.sql.functions import col
 
 from data_replication.audit.logger import DataReplicationLogger
@@ -30,7 +32,10 @@ class DatabricksOperations:
     """Utility class for Databricks operations."""
 
     def __init__(
-        self, spark: DatabricksSession, logger: Optional[DataReplicationLogger] = None
+        self,
+        spark: DatabricksSession,
+        logger: Optional[DataReplicationLogger] = None,
+        workspace_client: Optional[WorkspaceClient] = None,
     ):
         """
         Initialize Databricks operations.
@@ -38,9 +43,11 @@ class DatabricksOperations:
         Args:
             spark: DatabricksSession instance
             logger: Optional logger for SQL statement logging
+            workspace_client: Optional WorkspaceClient for catalog operations
         """
         self.spark = spark
         self.logger = logger
+        self.workspace_client = workspace_client
 
     def _execute_sql(self, sql_query: str, operation_context: str = ""):
         """
@@ -216,14 +223,17 @@ class DatabricksOperations:
         schema_name: str,
         table_names: List[str],
         table_types: List[TableType],
+        max_workers: int = 4,
     ) -> List[str]:
         """
-        Filter a list of table names to only include selected types.
+        Filter a list of table names to only include selected types using multithreading.
 
         Args:
             catalog_name: Name of the catalog
             schema_name: Name of the schema
             table_names: List of table names to filter
+            table_types: List of table types to filter by
+            max_workers: Maximum number of threads to use for parallel processing
 
         Returns:
             List of table names that are of the selected types
@@ -232,14 +242,47 @@ class DatabricksOperations:
         if table_types is None or len(table_types) == 0:
             return table_names
 
-        return [
-            table
-            for table in table_names
-            if self.get_table_type(
-                f"`{catalog_name}`.`{schema_name}`.`{table}`"
-            ).lower()
-            in [type.lower() for type in table_types]
-        ]
+        if len(table_names) == 0:
+            return []
+
+        # Handle ALL table type by expanding to all concrete table types
+        expanded_types = []
+        for table_type in table_types:
+            if table_type.lower() == "all":
+                expanded_types.extend(["managed", "streaming_table", "external"])
+            else:
+                expanded_types.append(table_type.lower())
+
+        # Remove duplicates while preserving order
+        allowed_types = list(dict.fromkeys(expanded_types))
+
+        def check_table_type(table_name: str) -> tuple[str, bool]:
+            """Check if table type is in allowed types"""
+            try:
+                full_table_name = f"`{catalog_name}`.`{schema_name}`.`{table_name}`"
+                table_type = self.get_table_type(full_table_name).lower()
+                return table_name, table_type in allowed_types
+            except Exception:
+                # If we can't determine the type, exclude the table
+                return table_name, False
+
+        filtered_tables = []
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all table type checks
+            future_to_table = {
+                executor.submit(check_table_type, table_name): table_name
+                for table_name in table_names
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_table):
+                table_name, is_included = future.result()
+                if is_included:
+                    filtered_tables.append(table_name)
+
+        return filtered_tables
 
     def get_all_schemas(self, catalog_name: str) -> List[str]:
         """
@@ -260,7 +303,7 @@ class DatabricksOperations:
             # Catalog might not exist or be accessible
             return []
 
-    @retry_with_logging(retry_config=RetryConfig(retries=5, delay=3))
+    @retry_with_logging(retry_config=RetryConfig(max_attempts=2, retry_delay_seconds=2))
     def refresh_schema_metadata(self, schema_name: str) -> bool:
         """
         Check if a schema exists.
@@ -317,7 +360,7 @@ class DatabricksOperations:
         """
         try:
             full_schema = f"`{catalog_name}`.`{schema_name}`"
-            
+
             # Get all tables first
             tables_df = self.spark.sql(f"SHOW TABLES IN {full_schema}").filter(
                 "isTemporary == false"
@@ -328,7 +371,9 @@ class DatabricksOperations:
 
             return [row.tableName for row in filtered_df.collect()]
         except Exception as e:
-            print(f"Warning: Could not filter tables in `{catalog_name}`.`{schema_name}`: {e}")
+            print(
+                f"Warning: Could not filter tables in `{catalog_name}`.`{schema_name}`: {e}"
+            )
             return []
 
     def describe_table_detail(self, table_name: str) -> dict:
@@ -361,7 +406,7 @@ class DatabricksOperations:
             )
             return {"properties": properties}
 
-    @retry_with_logging(retry_config=RetryConfig(retries=5, delay=3))
+    @retry_with_logging(retry_config=RetryConfig(max_attempts=2, retry_delay_seconds=2))
     def refresh_table_metadata(self, table_name: str) -> bool:
         """
         Check if a table exists.
@@ -848,6 +893,7 @@ class DatabricksOperations:
             Volume type as string
         """
         try:
+            self.refresh_volume_metadata(volume_name)
             # Use DESCRIBE VOLUME to get volume information
             describe_df = self.spark.sql(f"DESCRIBE VOLUME {volume_name}")
 
@@ -861,7 +907,7 @@ class DatabricksOperations:
             print(f"Warning: Could not determine volume type for {volume_name}: {e}")
             return None
 
-    @retry_with_logging(retry_config=RetryConfig(retries=5, delay=3))
+    @retry_with_logging(retry_config=RetryConfig(max_attempts=2, retry_delay_seconds=2))
     def refresh_volume_metadata(self, volume_name: str) -> bool:
         """
         Check if a volume exists.
@@ -981,3 +1027,137 @@ class DatabricksOperations:
             group by table_catalog, table_catalog, table_name""").collect()[0][0]
 
         return comment_maps_list
+
+    def get_catalog(self, catalog_name: str) -> dict:
+        """
+        Get source catalog info using workspace client.
+
+        Args:
+            catalog_name: Name of the catalog to get
+
+        Returns:
+            Dictionary containing catalog information
+
+        Raises:
+            Exception: If getting catalog fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for catalog operations")
+
+        try:
+            source_catalog_info = self.workspace_client.catalogs.get(catalog_name)
+            return source_catalog_info
+        except Exception as e:
+            raise Exception(
+                f"Failed to get source catalog {catalog_name}: {str(e)}"
+            ) from e
+
+    def create_catalog(self, catalog_config: dict) -> dict:
+        """
+        Create catalog using workspace client.
+
+        Args:
+            catalog_config: Dictionary containing catalog creation parameters
+
+        Returns:
+            Created catalog information
+
+        Raises:
+            Exception: If catalog creation fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for catalog operations")
+
+        try:
+            created_catalog = self.workspace_client.catalogs.create(**catalog_config)
+            return created_catalog
+        except Exception as e:
+            raise Exception(f"Failed to create catalog: {str(e)}") from e
+
+    def update_catalog(self, catalog_config: dict) -> dict:
+        """
+        Update catalog using workspace client.
+
+        Args:
+            catalog_config: Dictionary containing catalog update parameters
+
+        Returns:
+            Updated catalog information
+
+        Raises:
+            Exception: If catalog update fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for catalog operations")
+
+        try:
+            updated_catalog = self.workspace_client.catalogs.update(**catalog_config)
+            return updated_catalog
+        except Exception as e:
+            raise Exception(f"Failed to update catalog: {str(e)}") from e
+
+    def get_schema(self, full_name: str) -> dict:
+        """
+        Get schema information using workspace client.
+
+        Args:
+            full_name: Full name of the schema (catalog.schema)
+
+        Returns:
+            Dictionary containing schema information
+
+        Raises:
+            Exception: If getting schema fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for schema operations")
+
+        try:
+            schema_info = self.workspace_client.schemas.get(full_name)
+            return schema_info
+        except Exception as e:
+            raise Exception(f"Failed to get schema {full_name}: {str(e)}") from e
+
+    def create_schema(self, schema_config: dict) -> dict:
+        """
+        Create schema using workspace client.
+
+        Args:
+            schema_config: Dictionary containing schema creation parameters
+
+        Returns:
+            Created schema information
+
+        Raises:
+            Exception: If schema creation fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for schema operations")
+
+        try:
+            created_schema = self.workspace_client.schemas.create(**schema_config)
+            return created_schema
+        except Exception as e:
+            raise Exception(f"Failed to create schema: {str(e)}") from e
+
+    def update_schema(self, schema_config: dict) -> dict:
+        """
+        Update schema using workspace client.
+
+        Args:
+            schema_config: Dictionary containing schema update parameters
+
+        Returns:
+            Updated schema information
+
+        Raises:
+            Exception: If schema update fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for schema operations")
+
+        try:
+            updated_schema = self.workspace_client.schemas.update(**schema_config)
+            return updated_schema
+        except Exception as e:
+            raise Exception(f"Failed to update schema: {str(e)}") from e

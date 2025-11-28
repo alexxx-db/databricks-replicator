@@ -10,7 +10,7 @@ from typing import List
 
 from data_replication.databricks_operations import DatabricksOperations
 
-from ..config.models import RunResult
+from ..config.models import RunResult, SchemaConfig, TableConfig, TableType
 from ..exceptions import BackupError
 from ..utils import (
     create_spark_session,
@@ -55,9 +55,8 @@ class BackupProvider(BaseProvider):
         """Get the name of the operation for logging purposes."""
         return "backup"
 
-    def get_backup_schema_name(self, schema_name: str) -> str:
+    def get_backup_schema_name(self, schema_name: str, backup_config) -> str:
         """Get the backup schema name with prefix applied."""
-        backup_config = self.catalog_config.backup_config
         if backup_config and backup_config.backup_catalog:
             prefix = backup_config.backup_schema_prefix or ""
             return f"{prefix}{schema_name}"
@@ -69,10 +68,6 @@ class BackupProvider(BaseProvider):
             self.catalog_config.backup_config
             and self.catalog_config.backup_config.enabled
         )
-
-    def process_table(self, schema_name: str, table_name: str) -> RunResult:
-        """Process a single table for backup."""
-        return self._backup_table(schema_name, table_name)
 
     def setup_operation_catalogs(self) -> str:
         """Setup backup-specific catalogs."""
@@ -140,30 +135,34 @@ class BackupProvider(BaseProvider):
         return backup_config.source_catalog
 
     def process_schema_concurrently(
-        self, schema_name: str, table_list: List, volume_list: List = None
+        self,
+        schema_config: SchemaConfig,
     ) -> List[RunResult]:
         """Override to add backup-specific schema setup."""
-        backup_config = self.catalog_config.backup_config
+        backup_config = schema_config.backup_config
 
         # Ensure schema exists in backup catalog before processing
         if backup_config.backup_catalog:
             self.db_ops.create_schema_if_not_exists(
-                backup_config.backup_catalog, self.get_backup_schema_name(schema_name)
+                backup_config.backup_catalog, self.get_backup_schema_name(schema_config.schema_name, backup_config)
             )
 
         results = []
+        if backup_config.add_to_share:
+            schema_share_result = self._add_schema_to_shares(schema_config.schema_name, backup_config)
+            results.append(schema_share_result)
 
-        schema_share_result = self._add_schema_to_shares(schema_name, backup_config)
-        results.append(schema_share_result)
-
-        if self.catalog_config.table_types != ["streaming_table"]:
+        if (
+            schema_config.table_types
+            and TableType.STREAMING_TABLE not in schema_config.table_types
+        ) or not schema_config.table_types:
             self.logger.info(
-                f"""Skipping backup for schema {schema_name} as only streaming tables requires backup."""
+                f"""Skipping backup for schema {schema_config.schema_name} as only streaming tables requires backup."""
             )
             return results
 
         table_results = super().process_schema_concurrently(
-            schema_name, table_list, volume_list
+            schema_config
         )
         results.extend(table_results)
         return results
@@ -175,7 +174,7 @@ class BackupProvider(BaseProvider):
         attempt = 1
         max_attempts = 1
         status = "success"
-        backup_schema_name = self.get_backup_schema_name(schema_name)
+        backup_schema_name = self.get_backup_schema_name(schema_name, backup_config)
 
         try:
             if backup_config.add_to_share:
@@ -233,27 +232,38 @@ class BackupProvider(BaseProvider):
             max_attempts=max_attempts,
         )
 
+    def process_table(self, schema_config: SchemaConfig, table_config: TableConfig) -> List[RunResult]:
+        """Process a single table for backup."""
+        results = []
+        result = self._backup_table(schema_config.schema_name, table_config)
+        if result:
+            results.append(result)
+            self.audit_logger.log_results(results)
+        return results
+
     def _backup_table(
         self,
-        schema_name: str,
-        table_name: str,
+        schema_config: SchemaConfig,
+        table_config: TableConfig,
     ) -> RunResult:
         """
         Backup a single table using deep clone.
 
         Args:
             schema_name: Schema name
-            table_name: Table name to backup
+            table_config: Table configuration
 
         Returns:
             RunResult object for the backup operation
         """
         start_time = datetime.now(timezone.utc)
-        backup_config = self.catalog_config.backup_config
+        schema_name = schema_config.schema_name
+        table_name = table_config.table_name
+        backup_config = table_config.backup_config
         source_catalog = backup_config.source_catalog
 
         source_table = f"{source_catalog}.{schema_name}.{table_name}"
-        backup_schema_name = self.get_backup_schema_name(schema_name)
+        backup_schema_name = self.get_backup_schema_name(schema_name, backup_config)
         backup_table = (
             f"{backup_config.backup_catalog}.{backup_schema_name}.{table_name}"
         )
@@ -277,6 +287,13 @@ class BackupProvider(BaseProvider):
                 )
                 # Get source table type for audit logging
                 source_table_type = self.db_ops.get_table_type(source_table)
+
+                if source_table_type.upper() != TableType.STREAMING_TABLE.value.upper():
+                    self.logger.info(
+                        f"Skipping backup for table {source_table} of type {source_table_type}. Only streaming tables are backed up.",
+                        extra={"run_id": self.run_id, "operation": "backup"},
+                    )
+                    return
 
                 # Perform backup using deep clone and unset parentTableId property
                 backup_query = f"""CREATE OR REPLACE TABLE {backup_table}
