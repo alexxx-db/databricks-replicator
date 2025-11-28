@@ -211,6 +211,7 @@ def main():
             target_catalog_override=args.target_catalogs,
             target_schemas_override=args.target_schemas,
             target_tables_override=args.target_tables,
+            target_volumes_override=args.target_volumes,
             table_filter_expression_override=args.table_filter_expression,
             concurrency_override=args.concurrency,
             uc_object_types_override=uc_object_types_override,
@@ -219,6 +220,12 @@ def main():
             logging_level_override=args.logging_level,
             source_host_override=args.source_host,
             target_host_override=args.target_host,
+            volume_max_concurrent_copies_override=getattr(args, 'volume_max_concurrent_copies', None),
+            volume_delete_and_reload_override=getattr(args, 'volume_delete_and_reload', None),
+            volume_folder_path_override=getattr(args, 'volume_folder_path', None),
+            volume_delete_checkpoint_override=getattr(args, 'volume_delete_checkpoint', None),
+            volume_autoloader_options_override=getattr(args, 'volume_autoloader_options', None),
+            volume_streaming_timeout_secs_override=getattr(args, 'volume_streaming_timeout_secs', None),
         )
         logger = create_logger(config)
 
@@ -270,7 +277,6 @@ def main():
                 f"""Logging Spark session is not connected to the configured logging workspace. "
                 Expected: {logging_workspace_url}, Actual: {get_spark_workspace_url(logging_spark)}"""
             )
-
         logger.debug(f"Config: {config}")
 
         logger.info(

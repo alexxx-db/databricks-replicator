@@ -1,13 +1,15 @@
-# cli: data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalogs [catalog_name] --target-schemas [schema1,schema2]
+# cli: data-replicator configs/cross_metastore/all_tables_defaults.yaml --target-catalogs [catalog_name] --target-schemas [schema1,schema2]
 # Steps:
 # 1. Create delta share infrastructure in this tool including backup catalog, recipient, shares and shared catalogs with default system generated names.
-# 2. Deep clone source Streaming table backing table as delta table into backup catalog and add backup schema share at source
-# 3. Deep clone backup delta table into target Streaming table backing table at target. Note: For Streaming Table replication, tables need to already exist in target before Deep Clone
-# 4. Reconciliate data between source and target Streaming table.
+# 2.1 Deep clone source Streaming table backing table as delta table into backup catalog and add backup schema to share at source
+# 2.2 Add source schema to share at source
+# 3.1 Deep clone backup delta table into target Streaming table backing table at target. Note: For Streaming Table replication, tables need to already exist in target before Deep Clone
+# 3.2 Deep clone source delta table into target delta table backing table at target. 
+# 4. Reconciliate tables between source and target.
 
 version: "1.0"
 
-replication_group: "streaming_tables_defaults"
+replication_group: "all_tables_defaults"
 
 source_databricks_connect_config:
   name: "azure"
@@ -26,7 +28,7 @@ target_databricks_connect_config:
 audit_config:
   audit_table: "data_replication.audit.audit_logging"
 
-table_types: ["streaming_table"]
+table_types: ["all"]
 backup_config:
   enabled: true
   create_backup_catalog: true

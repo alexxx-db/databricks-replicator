@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 from data_replication.databricks_operations import DatabricksOperations
 
-from ..config.models import RunResult
+from ..config.models import RunResult, SchemaConfig, TableConfig
 from ..exceptions import ReconciliationError, TableNotFoundError
 from ..utils import (
     create_spark_session,
@@ -59,10 +59,6 @@ class ReconciliationProvider(BaseProvider):
             and self.catalog_config.reconciliation_config.enabled
         )
 
-    def process_table(self, schema_name: str, table_name: str) -> RunResult:
-        """Process a single table for reconciliation."""
-        return self._reconcile_table(schema_name, table_name)
-
     def _get_filtered_table_reference(self, table_name: str, is_source: bool) -> str:
         """Get table reference with optional filter applied."""
         reconciliation_config = self.catalog_config.reconciliation_config
@@ -103,10 +99,11 @@ class ReconciliationProvider(BaseProvider):
         return reconciliation_config.source_catalog
 
     def process_schema_concurrently(
-        self, schema_name: str, table_list: List, volume_list: List = None
+        self,
+        schema_config: SchemaConfig,
     ) -> List[RunResult]:
         """Override to add reconciliation-specific schema setup."""
-        reconciliation_config = self.catalog_config.reconciliation_config
+        reconciliation_config = schema_config.reconciliation_config
 
         # Ensure reconciliation_results schema exists for consolidated tables
         self.db_ops.create_schema_if_not_exists(
@@ -114,25 +111,38 @@ class ReconciliationProvider(BaseProvider):
             reconciliation_config.recon_outputs_schema,
         )
 
-        return super().process_schema_concurrently(schema_name, table_list, volume_list)
+        return super().process_schema_concurrently(schema_config)
+
+    def process_table(
+        self, schema_config: SchemaConfig, table_config: TableConfig
+    ) -> List[RunResult]:
+        """Process a single table for reconciliation."""
+        results = []
+        result = self._reconcile_table(schema_config, table_config)
+        if result:
+            results.append(result)
+            self.audit_logger.log_results(results)
+        return results
 
     def _reconcile_table(
         self,
-        schema_name: str,
-        table_name: str,
+        schema_config: SchemaConfig,
+        table_config: TableConfig,
     ) -> RunResult:
         """
         Reconcile a single table between source and target.
 
         Args:
             schema_name: Schema name
-            table_name: Table name to reconcile
+            table_config: TableConfig object for the table to reconcile
 
         Returns:
             RunResult object for the reconciliation operation
         """
         start_time = datetime.now(timezone.utc)
-        reconciliation_config = self.catalog_config.reconciliation_config
+        table_name = table_config.table_name
+        schema_name = schema_config.schema_name
+        reconciliation_config = table_config.reconciliation_config
         source_catalog = reconciliation_config.source_catalog
         target_catalog = self.catalog_config.catalog_name
         source_table = f"{source_catalog}.{schema_name}.{table_name}"
@@ -185,6 +195,7 @@ class ReconciliationProvider(BaseProvider):
                     source_table,
                     target_table,
                     reconciliation_operation,
+                    reconciliation_config,
                 )
                 schema_end_time = datetime.now(timezone.utc)
                 schema_duration = (schema_end_time - schema_start_time).total_seconds()
@@ -224,6 +235,7 @@ class ReconciliationProvider(BaseProvider):
                     source_table,
                     target_table,
                     reconciliation_operation,
+                    reconciliation_config,
                 )
                 row_count_end_time = datetime.now(timezone.utc)
                 row_count_duration = (
@@ -272,6 +284,7 @@ class ReconciliationProvider(BaseProvider):
                     source_table,
                     target_table,
                     reconciliation_operation,
+                    reconciliation_config,
                 )
                 missing_data_end_time = datetime.now(timezone.utc)
                 missing_data_duration = (
@@ -454,11 +467,11 @@ class ReconciliationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         reconciliation_operation,
+        reconciliation_config,
     ) -> Dict[str, Any]:
         """Perform schema comparison between source and target tables."""
         try:
             # Use consolidated schema comparison table
-            reconciliation_config = self.catalog_config.reconciliation_config
             schema_comparison_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.recon_schema_comparison"
 
             source_catalog = source_table.split(".")[0]
@@ -604,6 +617,13 @@ class ReconciliationProvider(BaseProvider):
 
             mismatch_count = mismatch_count_df.collect()[0]["mismatch_count"]
 
+            if mismatch_count > 0:
+                self.logger.info(
+                    f"{mismatch_count} schema mismatches found for {source_table} vs {target_table}",
+                    f"mismatches are recorded in {schema_comparison_table}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )
+
             return {
                 "passed": mismatch_count == 0,
                 "mismatch_count": mismatch_count,
@@ -627,11 +647,10 @@ class ReconciliationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         reconciliation_operation,
+        reconciliation_config,
     ) -> Dict[str, Any]:
         """Perform row count comparison between source and target tables."""
         try:
-            reconciliation_config = self.catalog_config.reconciliation_config
-
             # Get filtered table references
             source_table_ref = self._get_filtered_table_reference(source_table, True)
             target_table_ref = self._get_filtered_table_reference(target_table, False)
@@ -670,6 +689,12 @@ class ReconciliationProvider(BaseProvider):
             # Get the comparison result directly
             comparison_result = result.collect()[0]
 
+            if comparison_result["row_count_diff"] > 0:
+                self.logger.info(
+                    f"{comparison_result['row_count_diff']} row count mismatches found for {source_table} vs {target_table}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )
+
             return {
                 "passed": comparison_result["comparison_result"] == "match",
                 "source_count": comparison_result["source_row_count"],
@@ -695,11 +720,11 @@ class ReconciliationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         reconciliation_operation,
+        reconciliation_config,
     ) -> Dict[str, Any]:
         """Perform missing data check between source and target tables."""
         try:
             # Use consolidated missing data comparison table
-            reconciliation_config = self.catalog_config.reconciliation_config
             missing_data_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.recon_missing_data_comparison"
 
             source_catalog = source_table.split(".")[0]
@@ -861,6 +886,13 @@ class ReconciliationProvider(BaseProvider):
             missing_breakdown = {
                 row["issue_type"]: row["row_count"] for row in comparison_results
             }
+
+            if total_missing > 0:
+                self.logger.info(
+                    f"{total_missing} mismatches found for {source_table} vs {target_table}",
+                    f"mismatches are recorded in {missing_data_table}",
+                    extra={"run_id": self.run_id, "operation": "reconciliation"},
+                )            
 
             return {
                 "passed": total_missing == 0,

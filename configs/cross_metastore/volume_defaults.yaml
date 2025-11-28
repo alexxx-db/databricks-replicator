@@ -1,0 +1,54 @@
+# cli: data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs [catalog_name] --target-schemas [schema1,schema2]
+# Steps:
+# 1. Create delta share infrastructure in this tool including recipient, shares and shared catalogs with default system generated names.
+# 2. Add schema share at source
+# 3. Copy files from source volume to target volume using autoloader
+
+version: "1.0"
+
+replication_group: "volumes_defaults"
+
+source_databricks_connect_config:
+  name: "azure"
+  host: "https://adb-984752964297111.11.azuredatabricks.net"
+  token:
+    secret_scope: "test_kr"
+    secret_pat: "pat_source"
+
+target_databricks_connect_config:
+  name: "aws"
+  host: "https://e2-demo-field-eng.cloud.databricks.com"
+  token:
+    secret_scope: "test_kr"
+    secret_pat: "pat_target"
+
+audit_config:
+  audit_table: "data_replication.audit.audit_logging"
+
+volume_types: ["all"]
+backup_config:
+  enabled: true
+  create_recipient: true
+  create_share: true
+  add_to_share: true
+replication_config:
+  enabled: true
+  create_target_catalog: true
+  create_shared_catalog: true
+  volume_config:
+    # Optional: autoloader options dictionary for streaming table replication
+    autoloader_options:
+      cloudFiles.maxFilesPerTrigger: "1000"
+      modifiedAfter: "2000-01-01T00:00:00.000Z"
+    # Optional: if true, will delete target files and checkpoints before replication
+    delete_and_reload: false
+    # Optional: file ingestion logging table configuration
+    file_ingestion_logging_table: "detail_file_ingestion_logging"
+
+concurrency:
+  max_workers: 1
+  timeout_seconds: 1800
+
+retry:
+  max_attempts: 2
+  retry_delay_seconds: 3

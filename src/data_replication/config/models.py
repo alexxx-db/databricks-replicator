@@ -5,41 +5,55 @@ This module defines all the configuration models that validate and parse
 the YAML configuration file for the data replication system.
 """
 
+from copy import deepcopy
 from enum import Enum
 from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from data_replication.utils import merge_models_recursive
+
 
 class ExecuteAt(str, Enum):
     """Enumeration for where to execute certain operations."""
 
+    model_config = ConfigDict(extra="forbid")
+
     SOURCE = "source"
     TARGET = "target"
+
 
 class TableType(str, Enum):
     """Enumeration of supported table types."""
 
+    model_config = ConfigDict(extra="forbid")
+
     MANAGED = "managed"
     STREAMING_TABLE = "streaming_table"
     EXTERNAL = "external"
+    ALL = "all"
 
 
 class VolumeType(str, Enum):
     """Enumeration of supported volume types."""
 
+    model_config = ConfigDict(extra="forbid")
     MANAGED = "managed"
     EXTERNAL = "external"
     ALL = "all"
 
+
 class AuthType(str, Enum):
     """Enumeration of authentication types."""
 
+    model_config = ConfigDict(extra="forbid")
     PAT = "pat"
     OAUTH = "oauth"
+
 
 class UCObjectType(str, Enum):
     """Enumeration of Unity Catalog object types for replication."""
 
+    model_config = ConfigDict(extra="forbid")
     CATALOG = "catalog"
     CATALOG_TAG = "catalog_tag"
     SCHEMA = "schema"
@@ -53,8 +67,11 @@ class UCObjectType(str, Enum):
     COLUMN_COMMENT = "column_comment"
     ALL = "all"
 
+
 class SecretConfig(BaseModel):
     """Configuration for Databricks secrets."""
+
+    model_config = ConfigDict(extra="forbid")
 
     secret_scope: str
     secret_pat: Optional[str] = None
@@ -67,12 +84,20 @@ class SecretConfig(BaseModel):
         if not any([self.secret_pat, self.secret_client_id, self.secret_client_secret]):
             raise ValueError("At least one secret field must be provided")
         if self.secret_client_id and not self.secret_client_secret:
-            raise ValueError("secret_client_secret is required when secret_client_id is provided")
+            raise ValueError(
+                "secret_client_secret is required when secret_client_id is provided"
+            )
         if self.secret_client_secret and not self.secret_client_id:
-            raise ValueError("secret_client_id is required when secret_client_secret is provided")
+            raise ValueError(
+                "secret_client_id is required when secret_client_secret is provided"
+            )
         return self
+
+
 class AuditConfig(BaseModel):
     """Configuration for audit tables"""
+
+    model_config = ConfigDict(extra="forbid")
 
     audit_table: str
     logging_workspace: ExecuteAt = ExecuteAt.TARGET
@@ -99,6 +124,7 @@ class AuditConfig(BaseModel):
 class DatabricksConnectConfig(BaseModel):
     """Configuration for Databricks Connect."""
 
+    model_config = ConfigDict(extra="forbid")
     name: str
     sharing_identifier: Optional[str] = None
     host: str
@@ -107,50 +133,10 @@ class DatabricksConnectConfig(BaseModel):
     cluster_id: Optional[str] = None
 
 
-class TableConfig(BaseModel):
-    """Configuration for individual tables."""
-
-    table_name: str
-
-    @field_validator("table_name")
-    @classmethod
-    def validate_table_name(cls, v):
-        """Convert table name to lowercase."""
-        return v.lower() if v else v
-
-
-class VolumeConfig(BaseModel):
-    """Configuration for individual volumes."""
-
-    volume_name: str
-
-    @field_validator("volume_name")
-    @classmethod
-    def validate_volume_name(cls, v):
-        """Convert volume name to lowercase."""
-        return v.lower() if v else v
-
-
-class SchemaConfig(BaseModel):
-    """Configuration for individual schemas."""
-
-    schema_name: str
-    tables: Optional[List[TableConfig]] = None
-    exclude_tables: Optional[List[TableConfig]] = None
-    table_filter_expression: Optional[str] = None
-    volumes: Optional[List[VolumeConfig]] = None
-    exclude_volumes: Optional[List[VolumeConfig]] = None
-
-    @field_validator("schema_name")
-    @classmethod
-    def validate_schema_name(cls, v):
-        """Convert schema name to lowercase."""
-        return v.lower() if v else v
-
-
 class BackupConfig(BaseModel):
     """Configuration for backup operations."""
 
+    model_config = ConfigDict(extra="forbid")
     enabled: Optional[bool] = None
     source_catalog: Optional[str] = None
     create_recipient: Optional[bool] = False
@@ -174,19 +160,24 @@ class BackupConfig(BaseModel):
 class ReplicationConfig(BaseModel):
     """Configuration for replication operations."""
 
+    model_config = ConfigDict(extra="forbid")
     enabled: Optional[bool] = None
     create_target_catalog: Optional[bool] = False
     target_catalog_location: Optional[str] = None
     create_shared_catalog: Optional[bool] = False
     share_name: Optional[str] = None
     source_catalog: Optional[str] = None
+    backup_share_name: Optional[str] = None
+    backup_catalog: Optional[str] = None
     create_intermediate_catalog: Optional[bool] = False
     intermediate_catalog: Optional[str] = None
     intermediate_catalog_location: Optional[str] = None
     enforce_schema: Optional[bool] = True
     overwrite_tags: Optional[bool] = True
     overwrite_comments: Optional[bool] = True
+    replicate_as_managed: Optional[bool] = False
     copy_files: Optional[bool] = True
+    volume_config: Optional["VolumeFilesReplicationConfig"] = None
 
     @field_validator("source_catalog", "intermediate_catalog")
     @classmethod
@@ -198,6 +189,7 @@ class ReplicationConfig(BaseModel):
 class ReconciliationConfig(BaseModel):
     """Configuration for reconciliation operations."""
 
+    model_config = ConfigDict(extra="forbid")
     enabled: Optional[bool] = None
     create_recon_catalog: Optional[bool] = False
     recon_outputs_catalog: Optional[str] = None
@@ -212,6 +204,7 @@ class ReconciliationConfig(BaseModel):
     exclude_columns: Optional[List[str]] = None
     source_filter_expression: Optional[str] = None
     target_filter_expression: Optional[str] = None
+    threshold: Optional[float] = 100.0
 
     @field_validator("source_catalog", "recon_outputs_catalog")
     @classmethod
@@ -226,8 +219,65 @@ class ReconciliationConfig(BaseModel):
         return v.lower() if v else v
 
 
+class TableConfig(BaseModel):
+    """Configuration for individual tables."""
+    model_config = ConfigDict(extra="forbid")
+
+    table_name: str
+    backup_config: Optional[BackupConfig] = None
+    replication_config: Optional[ReplicationConfig] = None
+    reconciliation_config: Optional[ReconciliationConfig] = None
+
+    @field_validator("table_name")
+    @classmethod
+    def validate_table_name(cls, v):
+        """Convert table name to lowercase."""
+        return v.lower() if v else v
+
+
+class VolumeConfig(BaseModel):
+    """Configuration for individual volumes."""
+    model_config = ConfigDict(extra="forbid")
+
+    volume_name: str
+    backup_config: Optional[BackupConfig] = None
+    replication_config: Optional[ReplicationConfig] = None
+    reconciliation_config: Optional[ReconciliationConfig] = None
+
+    @field_validator("volume_name")
+    @classmethod
+    def validate_volume_name(cls, v):
+        """Convert volume name to lowercase."""
+        return v.lower() if v else v
+
+
+class SchemaConfig(BaseModel):
+    """Configuration for individual schemas."""
+    model_config = ConfigDict(extra="forbid")
+
+    schema_name: str
+    tables: Optional[List[TableConfig]] = None
+    table_types: Optional[List[TableType]] = None
+    volume_types: Optional[List[VolumeType]] = None
+    uc_object_types: Optional[List[UCObjectType]] = None
+    exclude_tables: Optional[List[TableConfig]] = None
+    table_filter_expression: Optional[str] = None
+    volumes: Optional[List[VolumeConfig]] = None
+    exclude_volumes: Optional[List[VolumeConfig]] = None
+    backup_config: Optional[BackupConfig] = None
+    replication_config: Optional[ReplicationConfig] = None
+    reconciliation_config: Optional[ReconciliationConfig] = None
+
+    @field_validator("schema_name")
+    @classmethod
+    def validate_schema_name(cls, v):
+        """Convert schema name to lowercase."""
+        return v.lower() if v else v
+
+
 class TargetCatalogConfig(BaseModel):
     """Configuration for target catalogs."""
+    model_config = ConfigDict(extra="forbid")
 
     catalog_name: str
     table_types: Optional[List[TableType]] = None
@@ -250,6 +300,8 @@ class TargetCatalogConfig(BaseModel):
 class ConcurrencyConfig(BaseModel):
     """Configuration for concurrency settings."""
 
+    model_config = ConfigDict(extra="forbid")
+
     max_workers: int = Field(default=4, ge=1, le=32)
     timeout_seconds: int = Field(default=3600, ge=60)
 
@@ -257,6 +309,7 @@ class ConcurrencyConfig(BaseModel):
 class LoggingConfig(BaseModel):
     """Configuration for logging settings."""
 
+    model_config = ConfigDict(extra="forbid")
     level: str = Field(default="INFO")
     format: str = Field(default="json")  # "text" or "json"
     log_to_file: bool = Field(default=False)
@@ -285,15 +338,35 @@ class LoggingConfig(BaseModel):
         return v.lower()
 
 
+class VolumeFilesReplicationConfig(BaseModel):
+    """Configuration for volume files replication."""
+
+    model_config = ConfigDict(extra="forbid")
+    max_concurrent_copies: int = Field(default=10, ge=1, le=100)
+    delete_and_reload: bool = False
+    delete_checkpoint: bool = False
+    folder_path: Optional[str] = None
+    autoloader_options: Optional[dict] = None
+    streaming_timeout_seconds: int = Field(default=43200, ge=60)
+    create_file_ingestion_logging_catalog: bool = False
+    file_ingestion_logging_catalog: Optional[str] = None
+    file_ingestion_logging_catalog_location: Optional[str] = None
+    file_ingestion_logging_schema: Optional[str] = None
+    file_ingestion_logging_table: Optional[str] = "detail_file_ingestion_logging"
+
+
 class RetryConfig(BaseModel):
     """Configuration for retry settings."""
 
+    model_config = ConfigDict(extra="forbid")
     max_attempts: int = Field(default=3, ge=1, le=10)
     retry_delay_seconds: int = Field(default=5, ge=1)
 
 
 class ReplicationSystemConfig(BaseModel):
     """Root configuration model for the replication system."""
+
+    model_config = ConfigDict(extra="forbid")
 
     version: str
     replication_group: str
@@ -321,84 +394,64 @@ class ReplicationSystemConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
+    def merge_configs(self):
+        """Merge catalog-level configs into system-level config."""
+        if self.target_catalogs:
+            for i, catalog in enumerate(self.target_catalogs):
+                self.target_catalogs[i] = merge_models_recursive(
+                    deepcopy(self), catalog
+                )
+        return self
+
+    @model_validator(mode="after")
     def set_table_types(self):
-        """Merge catalog-level table types into system-level config"""
+        """Set default table types and expand 'all' type"""
+        # Expand system-level table_types if it contains "all"
+        if self.table_types and TableType.ALL in self.table_types:
+            self.table_types = [
+                TableType.MANAGED,
+                TableType.EXTERNAL,
+                TableType.STREAMING_TABLE,
+            ]
+
         for catalog in self.target_catalogs:
-            if self.table_types is not None and catalog.table_types is None:
-                catalog.table_types = self.table_types
+            # Expand catalog-level table_types if it contains "all"
+            if catalog.table_types and TableType.ALL in catalog.table_types:
+                catalog.table_types = [
+                    TableType.MANAGED,
+                    TableType.EXTERNAL,
+                    TableType.STREAMING_TABLE,
+                ]
         return self
 
     @model_validator(mode="after")
-    def set_volume_types(self):
-        """Merge catalog-level volume types into system-level config"""
+    def set_file_ingestion_logging_defaults(self):
+        """Set default file ingestion logging catalog and schema from audit_config."""
+        # Extract catalog and schema from audit_table
+        audit_parts = self.audit_config.audit_table.split(".")
+        audit_catalog = audit_parts[0]
+        audit_schema = audit_parts[1]
+
         for catalog in self.target_catalogs:
-            if self.volume_types is not None and catalog.volume_types is None:
-                catalog.volume_types = self.volume_types
-        return self
-
-    @model_validator(mode="after")
-    def set_uc_object_types(self):
-        """Merge catalog-level UC object types into system-level config"""
-        for catalog in self.target_catalogs:
-            if self.uc_object_types is not None and catalog.uc_object_types is None:
-                catalog.uc_object_types = self.uc_object_types
-        return self
-
-    @model_validator(mode="after")
-    def set_backup_defaults(self):
-        """Merge catalog-level backup configs into system-level config"""
-        for catalog in self.target_catalogs:
-            if catalog.backup_config:
-                # Merge system-level config into catalog config (catalog takes precedence)
-                if self.backup_config:
-                    system_dict = self.backup_config.model_dump()
-                    catalog_dict = catalog.backup_config.model_dump()
-
-                    # Merge: system values as base, catalog values override
-                    merged_dict = {
-                        **system_dict,
-                        **{k: v for k, v in catalog_dict.items() if v is not None},
-                    }
-                    catalog.backup_config = BackupConfig(**merged_dict)
-                # If no system config, catalog config stays as is
-            else:
-                # If catalog has no backup_config, use system-level config
-                if self.backup_config:
-                    catalog.backup_config = BackupConfig(
-                        **self.backup_config.model_dump()
-                    )
-
-        return self
-
-    @model_validator(mode="after")
-    def set_replication_defaults(self):
-        """Merge catalog-level replication configs into system-level config"""
-        for catalog in self.target_catalogs:
-            if catalog.replication_config:
-                # Merge system-level config into catalog config (catalog takes precedence)
-                if self.replication_config:
-                    system_dict = self.replication_config.model_dump()
-                    catalog_dict = catalog.replication_config.model_dump()
-
-                    # Merge: system values as base, catalog values override
-                    merged_dict = {
-                        **system_dict,
-                        **{k: v for k, v in catalog_dict.items() if v is not None},
-                    }
-                    catalog.replication_config = ReplicationConfig(**merged_dict)
-                # If no system config, catalog config stays as is
-            else:
-                if self.replication_config:
-                    catalog.replication_config = ReplicationConfig(
-                        **self.replication_config.model_dump()
-                    )
+            if catalog.replication_config and catalog.replication_config.volume_config:
+                if (
+                    catalog.replication_config.volume_config.file_ingestion_logging_catalog
+                    is None
+                ):
+                    catalog.replication_config.volume_config.file_ingestion_logging_catalog = audit_catalog
+                if (
+                    catalog.replication_config.volume_config.file_ingestion_logging_schema
+                    is None
+                ):
+                    catalog.replication_config.volume_config.file_ingestion_logging_schema = audit_schema
 
         return self
 
     @model_validator(mode="after")
     def set_reconciliation_defaults(self):
-        """Set default recon_outputs_catalog and recon_outputs_schema from audit_config.
-        Merge catalog-level reconciliation configs into system-level config"""
+        """
+        Set default recon_outputs_catalog and recon_outputs_schema from audit_config.
+        """
         # Extract catalog and schema from audit_table
         audit_parts = self.audit_config.audit_table.split(".")
         audit_catalog = audit_parts[0]
@@ -420,24 +473,6 @@ class ReplicationSystemConfig(BaseModel):
 
         # Merge catalog-level reconciliation configs into system-level config
         for catalog in self.target_catalogs:
-            if catalog.reconciliation_config:
-                # Merge system-level config into catalog config (catalog takes precedence)
-                if self.reconciliation_config:
-                    system_dict = self.reconciliation_config.model_dump()
-                    catalog_dict = catalog.reconciliation_config.model_dump()
-
-                    # Merge: system values as base, catalog values override
-                    merged_dict = {
-                        **system_dict,
-                        **{k: v for k, v in catalog_dict.items() if v is not None},
-                    }
-                    catalog.reconciliation_config = ReconciliationConfig(**merged_dict)
-                # If no system config, catalog config stays as is
-            else:
-                if self.reconciliation_config:
-                    catalog.reconciliation_config = ReconciliationConfig(
-                        **self.reconciliation_config.model_dump()
-                    )
             if catalog.reconciliation_config:
                 if catalog.reconciliation_config.recon_outputs_catalog is None:
                     catalog.reconciliation_config.recon_outputs_catalog = audit_catalog
@@ -487,7 +522,6 @@ class ReplicationSystemConfig(BaseModel):
             replace_in_object(catalog.backup_config, catalog.catalog_name)
             replace_in_object(catalog.replication_config, catalog.catalog_name)
             replace_in_object(catalog.reconciliation_config, catalog.catalog_name)
-            # print(catalog)
 
         return self
 
@@ -531,7 +565,7 @@ class ReplicationSystemConfig(BaseModel):
                 if (
                     catalog.backup_config.backup_catalog is None
                     and catalog.table_types
-                    and catalog.table_types == [TableType.STREAMING_TABLE]
+                    and TableType.STREAMING_TABLE in catalog.table_types
                 ):
                     catalog.backup_config.backup_catalog = default_backup_catalog
 
@@ -556,30 +590,33 @@ class ReplicationSystemConfig(BaseModel):
 
             # Derive default replication catalogs
             if catalog.replication_config and catalog.replication_config.enabled:
-
                 # for uc replication, default source_catalog is the same as target catalog_name
                 if catalog.uc_object_types and len(catalog.uc_object_types) > 0:
                     if catalog.replication_config.source_catalog is None:
                         catalog.replication_config.source_catalog = catalog.catalog_name
                 else:
-                # for table/volume replication, derive defaults shared catalogs
-                    if (
-                        catalog.replication_config.create_shared_catalog
-                        and catalog.replication_config.share_name is None
-                    ):
-                        catalog.replication_config.share_name = (
-                            (
-                                f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
+                    # for table/volume replication, derive defaults shared catalogs
+                    if catalog.replication_config.create_shared_catalog:
+                        if catalog.replication_config.share_name is None:
+                            catalog.replication_config.share_name = (
+                                f"{catalog.catalog_name}_to_{target_name}_share"
                             )
-                            if catalog.table_types and catalog.table_types == [TableType.STREAMING_TABLE]
-                            else (f"{catalog.catalog_name}_to_{target_name}_share")
-                        )
+                        if (
+                            catalog.replication_config.backup_share_name is None
+                            and catalog.table_types
+                            and TableType.STREAMING_TABLE in catalog.table_types
+                        ):
+                            catalog.replication_config.backup_share_name = f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
                     if catalog.replication_config.source_catalog is None:
                         catalog.replication_config.source_catalog = (
-                            f"__replication_internal_{catalog.catalog_name}_from_{source_name}"
-                            if catalog.table_types and catalog.table_types == [TableType.STREAMING_TABLE]
-                            else f"{catalog.catalog_name}_from_{source_name}"
+                            f"{catalog.catalog_name}_from_{source_name}"
                         )
+                    if (
+                        catalog.replication_config.backup_catalog is None
+                        and catalog.table_types
+                        and TableType.STREAMING_TABLE in catalog.table_types
+                    ):
+                        catalog.replication_config.backup_catalog = f"__replication_internal_{catalog.catalog_name}_from_{source_name}_shared"
 
             # Derive default reconciliation catalogs
             if catalog.reconciliation_config and catalog.reconciliation_config.enabled:
@@ -664,31 +701,21 @@ class ReplicationSystemConfig(BaseModel):
 
             # Validate streaming table constraints
             has_streaming_table = (
-                catalog.table_types
-                and TableType.STREAMING_TABLE in catalog.table_types
+                catalog.table_types and TableType.STREAMING_TABLE in catalog.table_types
             )
-            has_other_table_types = (
-                catalog.table_types
-                and len([t for t in catalog.table_types if t != TableType.STREAMING_TABLE]) > 0
-            )
-
-            # Streaming tables can't be backed up and replicated with other object types
-            if has_streaming_table and has_other_table_types:
-                if (catalog.backup_config and catalog.backup_config.enabled) or (
-                    catalog.replication_config and catalog.replication_config.enabled
-                ):
-                    raise ValueError(
-                        f"""
-                        Streaming tables cannot be backed up and replicated with other object types in catalog: {catalog.catalog_name}
-                        """
-                    )
 
             # backup_catalog should only be set for streaming tables
-            if (
-                not has_streaming_table
-                and catalog.backup_config
-                and catalog.backup_config.enabled
-                and catalog.backup_config.backup_catalog
+            if not has_streaming_table and (
+                (
+                    catalog.backup_config
+                    and catalog.backup_config.enabled
+                    and catalog.backup_config.backup_catalog
+                )
+                or (
+                    catalog.replication_config
+                    and catalog.replication_config.enabled
+                    and catalog.replication_config.backup_catalog
+                )
             ):
                 raise ValueError(
                     f"""
@@ -701,6 +728,8 @@ class ReplicationSystemConfig(BaseModel):
 
 class AuditLogEntry(BaseModel):
     """Model for audit log entries."""
+
+    model_config = ConfigDict(extra="forbid")
 
     run_id: str
     timestamp: str
@@ -733,6 +762,8 @@ class AuditLogEntry(BaseModel):
 class RunSummary(BaseModel):
     """Model for run summary logging."""
 
+    model_config = ConfigDict(extra="forbid")
+
     run_id: str
     start_time: str
     end_time: Optional[str] = None
@@ -749,6 +780,7 @@ class RunSummary(BaseModel):
 class RunResult(BaseModel):
     """Model for operation run results."""
 
+    model_config = ConfigDict(extra="forbid")
     operation_type: str
     catalog_name: str
     schema_name: Optional[str] = None
@@ -757,6 +789,7 @@ class RunResult(BaseModel):
     status: str  # success, failed
     start_time: str
     end_time: str
+    duration_seconds: Optional[float] = None
     error_message: Optional[str] = None
     details: Optional[dict] = None
     attempt_number: Optional[int] = None
