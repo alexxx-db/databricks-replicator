@@ -15,6 +15,8 @@ from typing import List, Optional
 
 from databricks.connect import DatabricksSession
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import EnablePredictiveOptimization
+
 from pyspark.sql.utils import AnalysisException
 
 from data_replication.utils import (
@@ -22,7 +24,7 @@ from data_replication.utils import (
     merge_models_recursive,
     retry_with_logging,
     merge_maps,
-    map_external_location,
+    map_cloud_url,
 )
 
 from ..audit.audit_logger import AuditLogger
@@ -45,6 +47,12 @@ from ..exceptions import (
     ReplicationError,
     SparkSessionError,
 )
+from ..constants import (
+    DICT_FOR_CREATION_CATALOG,
+    DICT_FOR_CREATION_SCHEMA,
+    DICT_FOR_UPDATE_CATALOG,
+    DICT_FOR_UPDATE_SCHEMA,
+)
 
 
 class BaseProvider(ABC):
@@ -63,7 +71,7 @@ class BaseProvider(ABC):
         retry: Optional[RetryConfig] = None,
         max_workers: int = 2,
         timeout_seconds: int = 1800,
-        external_location_mapping: Optional[dict] = None,
+        cloud_url_mapping: Optional[dict] = None,
         audit_logger: Optional[AuditLogger] = None,
     ):
         """
@@ -92,7 +100,7 @@ class BaseProvider(ABC):
         )
         self.max_workers = max_workers
         self.timeout_seconds = timeout_seconds
-        self.external_location_mapping = external_location_mapping
+        self.cloud_url_mapping = cloud_url_mapping
         self.audit_logger = audit_logger
         self.catalog_name: Optional[str] = None
         self.source_spark = None
@@ -149,10 +157,10 @@ class BaseProvider(ABC):
             ),
         ):
             error_msg = f"Failed to {context} {catalog_name}.{schema_name}.{object_name}: {str(e)}"
-            self.logger.error(error_msg, exc_info=True)
+            self.logger.error(error_msg)
         else:
             error_msg = f"Unexpected error {context} {catalog_name}.{schema_name}.{object_name}: {str(e)}"
-            self.logger.error(error_msg, exc_info=True)
+            self.logger.error(error_msg)
 
         return self._create_failed_result(
             catalog_name, schema_name, object_name, object_type, error_msg, start_time
@@ -1231,27 +1239,8 @@ class BaseProvider(ABC):
         max_attempts = self.retry.max_attempts
         last_exception = None
 
-        dict_for_creation = {
-            "name": None,
-            "comment": None,
-            "connection_name": None,
-            "options": None,
-            "properties": None,
-            "provider_name": None,
-            "share_name": None,
-            "storage_root": None,
-        }
-
-        dict_for_update = {
-            "name": None,
-            "comment": None,
-            "enable_predictive_optimization": None,
-            "isolation_mode": None,
-            # "new_name": None,
-            "options": None,
-            # "owner": None,
-            "properties": None,
-        }
+        dict_for_creation = DICT_FOR_CREATION_CATALOG.copy()
+        dict_for_update = DICT_FOR_UPDATE_CATALOG.copy()
 
         try:
             self.logger.info(
@@ -1263,18 +1252,18 @@ class BaseProvider(ABC):
             source_catalog_info = self.source_dbops.get_catalog(source_catalog)
 
             dict_for_creation = {
-                k: v
+                k: getattr(source_catalog_info, k, None)
                 for k, v in source_catalog_info.as_dict().items()
                 if k in dict_for_creation.keys()
             }
 
             dict_for_update = {
-                k: v
+                k: getattr(source_catalog_info, k, None)
                 for k, v in source_catalog_info.as_dict().items()
                 if k in dict_for_update.keys()
             }
 
-            # Determine target storage root using external_location_mapping if applicable
+            # Determine target storage root using cloud_url_mapping if applicable
             target_storage_root = None
             source_storage_root = getattr(source_catalog_info, "storage_root", None)
             # Check if replicate_as_managed is enabled
@@ -1288,10 +1277,10 @@ class BaseProvider(ABC):
                 )
             else:
                 if source_storage_root:
-                    if self.external_location_mapping:
+                    if self.cloud_url_mapping:
                         # Map external location using utility function
-                        target_storage_root = map_external_location(
-                            source_storage_root, self.external_location_mapping
+                        target_storage_root = map_cloud_url(
+                            source_storage_root, self.cloud_url_mapping
                         )
 
                         if target_storage_root is None:
@@ -1303,7 +1292,7 @@ class BaseProvider(ABC):
                     else:
                         raise ReplicationError(
                             f"Source catalog {source_catalog} has storage root: {source_storage_root} "
-                            f"but external_location_mapping is not configured. "
+                            f"but cloud_url_mapping is not configured. "
                             f"Cannot replicate external catalog without proper mapping. "
                             f"Set replicate_as_managed=true to create as managed catalog instead."
                         )
@@ -1327,13 +1316,33 @@ class BaseProvider(ABC):
             if not catalog_exists:
                 # Create catalog using workspace client
                 _ = self.target_dbops.create_catalog(dict_for_creation)
+
+                if not replication_config.replicate_enable_predictive_optimization:
+                    self.logger.info(
+                        f"Disabling predictive optimization for newly created catalog {target_catalog}",
+                        extra={"run_id": self.run_id, "operation": "uc_replication"},
+                    )
+                    _ = self.target_dbops.update_catalog(
+                        {
+                            "name": target_catalog,
+                            "enable_predictive_optimization": EnablePredictiveOptimization.DISABLE,
+                        }
+                    )
             else:
                 dict_for_update_target = {
-                    k: v
+                    k: getattr(target_catalog_info, k, None)
                     for k, v in target_catalog_info.as_dict().items()
                     if k in dict_for_update.keys()
                 }
                 dict_for_update["name"] = target_catalog
+                if not replication_config.replicate_enable_predictive_optimization:
+                    self.logger.info(
+                        f"Disabling predictive optimization for existing catalog {target_catalog}",
+                        extra={"run_id": self.run_id, "operation": "uc_replication"},
+                    )
+                    dict_for_update["enable_predictive_optimization"] = (
+                        EnablePredictiveOptimization.DISABLE
+                    )
 
                 if dict_for_update != dict_for_update_target:
                     _ = self.target_dbops.update_catalog(dict_for_update)
@@ -1383,7 +1392,6 @@ class BaseProvider(ABC):
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "uc_replication"},
-                exc_info=True,
             )
             if last_exception:
                 error_msg += f" | Last error: {str(last_exception)}"
@@ -1434,22 +1442,9 @@ class BaseProvider(ABC):
         max_attempts = self.retry.max_attempts
         last_exception = None
 
-        dict_for_creation = {
-            "catalog_name": target_catalog,
-            "name": schema_name,
-            "comment": None,
-            "properties": None,
-            "storage_root": None,
-        }
+        dict_for_creation = DICT_FOR_CREATION_SCHEMA
 
-        dict_for_update = {
-            "full_name": target_schema_full_name,
-            "comment": None,
-            "enable_predictive_optimization": None,
-            # "new_name": None,
-            # "owner": None,
-            "properties": None,
-        }
+        dict_for_update = DICT_FOR_UPDATE_SCHEMA
 
         try:
             self.logger.info(
@@ -1461,7 +1456,7 @@ class BaseProvider(ABC):
             source_schema_info = self.source_dbops.get_schema(source_schema_full_name)
 
             dict_for_creation = {
-                k: v
+                k: getattr(source_schema_info, k, None)
                 for k, v in source_schema_info.as_dict().items()
                 if k in dict_for_creation.keys()
             }
@@ -1470,14 +1465,14 @@ class BaseProvider(ABC):
             dict_for_creation["name"] = schema_name
 
             dict_for_update = {
-                k: v
+                k: getattr(source_schema_info, k, None)
                 for k, v in source_schema_info.as_dict().items()
                 if k in dict_for_update.keys()
             }
             # Ensure full_name is set correctly for target
             dict_for_update["full_name"] = target_schema_full_name
 
-            # Determine target storage root using external_location_mapping if applicable
+            # Determine target storage root using cloud_url_mapping if applicable
             target_storage_root = None
             source_storage_root = getattr(source_schema_info, "storage_root", None)
             # Check if replicate_as_managed is enabled
@@ -1491,10 +1486,10 @@ class BaseProvider(ABC):
                 )
             else:
                 if source_storage_root:
-                    if self.external_location_mapping:
+                    if self.cloud_url_mapping:
                         # Map external location using utility function
-                        target_storage_root = map_external_location(
-                            source_storage_root, self.external_location_mapping
+                        target_storage_root = map_cloud_url(
+                            source_storage_root, self.cloud_url_mapping
                         )
 
                         if target_storage_root is None:
@@ -1506,7 +1501,7 @@ class BaseProvider(ABC):
                     else:
                         raise ReplicationError(
                             f"Source schema {source_schema_full_name} has storage root: {source_storage_root} "
-                            f"but external_location_mapping is not configured. "
+                            f"but cloud_url_mapping is not configured. "
                             f"Cannot replicate external schema without proper mapping. "
                             f"Set replicate_as_managed=true to create as managed schema instead."
                         )
@@ -1532,12 +1527,33 @@ class BaseProvider(ABC):
             if not schema_exists:
                 # Create schema using workspace client
                 _ = self.target_dbops.create_schema(dict_for_creation)
+
+                if not replication_config.replicate_enable_predictive_optimization:
+                    self.logger.info(
+                        f"Disabling predictive optimization for newly created schema {target_schema_full_name}",
+                        extra={"run_id": self.run_id, "operation": "uc_replication"},
+                    )
+                    _ = self.target_dbops.update_schema(
+                        {
+                            "full_name": target_schema_full_name,
+                            "enable_predictive_optimization": EnablePredictiveOptimization.DISABLE,
+                        }
+                    )
             else:
                 dict_for_update_target = {
-                    k: v
+                    k: getattr(target_schema_info, k, None)
                     for k, v in target_schema_info.as_dict().items()
                     if k in dict_for_update.keys()
                 }
+
+                if not replication_config.replicate_enable_predictive_optimization:
+                    self.logger.info(
+                        f"Disabling predictive optimization for existing schema {target_schema_full_name}",
+                        extra={"run_id": self.run_id, "operation": "uc_replication"},
+                    )
+                    dict_for_update["enable_predictive_optimization"] = (
+                        EnablePredictiveOptimization.DISABLE
+                    )
 
                 if dict_for_update != dict_for_update_target:
                     _ = self.target_dbops.update_schema(dict_for_update)
@@ -1587,7 +1603,6 @@ class BaseProvider(ABC):
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "uc_replication"},
-                exc_info=True,
             )
             if last_exception:
                 error_msg += f" | Last error: {str(last_exception)}"

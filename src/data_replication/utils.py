@@ -357,24 +357,24 @@ def merge_models_recursive(
     return base_model
 
 
-def map_external_location(
-    source_storage_root: str, external_location_mapping: dict
+def map_cloud_url(
+    source_storage_root: str, cloud_url_mapping: dict
 ) -> Optional[str]:
     """
     Map a source storage root to a target storage root using external location mapping.
 
     Args:
         source_storage_root: Source storage root path
-        external_location_mapping: Dictionary mapping source to target external locations
+        cloud_url_mapping: Dictionary mapping source to target cloud URLs
 
     Returns:
         Mapped target storage root path, or None if no mapping found
     """
-    if not source_storage_root or not external_location_mapping:
+    if not source_storage_root or not cloud_url_mapping:
         return None
 
     # Find matching source external location
-    for src_location, tgt_location in external_location_mapping.items():
+    for src_location, tgt_location in cloud_url_mapping.items():
         if source_storage_root.startswith(src_location):
             # Calculate relative path and construct target location
             relative_path = source_storage_root[len(src_location) :].lstrip("/")

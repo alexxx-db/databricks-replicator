@@ -65,7 +65,18 @@ class UCObjectType(str, Enum):
     TABLE_TAG = "table_tag"
     COLUMN_TAG = "column_tag"
     COLUMN_COMMENT = "column_comment"
+    STORAGE_CREDENTIAL = "storage_credential"
+    EXTERNAL_LOCATION = "external_location"
     ALL = "all"
+
+
+class CredentialType(str, Enum):
+    """Enumeration of supported credential types for storage credentials."""
+
+    model_config = ConfigDict(extra="forbid")
+    AWS = "aws"
+    AZURE_ACCESS_CONNECTOR = "azure_access_connector"
+    AZURE_MANAGED_IDENTITY = "azure_managed_identity"
 
 
 class SecretConfig(BaseModel):
@@ -167,6 +178,7 @@ class ReplicationConfig(BaseModel):
     create_shared_catalog: Optional[bool] = False
     share_name: Optional[str] = None
     source_catalog: Optional[str] = None
+    replicate_enable_predictive_optimization: Optional[bool] = False
     backup_share_name: Optional[str] = None
     backup_catalog: Optional[str] = None
     create_intermediate_catalog: Optional[bool] = False
@@ -355,6 +367,24 @@ class VolumeFilesReplicationConfig(BaseModel):
     file_ingestion_logging_table: Optional[str] = "detail_file_ingestion_logging"
 
 
+class StorageCredentialConfig(BaseModel):
+    """Configuration for storage credential replication."""
+
+    model_config = ConfigDict(extra="forbid")
+    target_credential_type: CredentialType = Field(..., description="Target credential type: aws, azure, gcp, or cloudflare")
+    mapping: dict[str, str] = Field(..., description="Mapping of source storage credential names to target cloud principal IDs")
+
+
+class ExternalLocationConfig(BaseModel):
+    """Configuration for external location replication."""
+
+    model_config = ConfigDict(extra="forbid")
+    external_locations: Optional[List[str]] = Field(
+        default=None, 
+        description="List of external location names to replicate. If not provided, all external locations matched in cloud_url_mapping will be replicated"
+    )
+
+
 class RetryConfig(BaseModel):
     """Configuration for retry settings."""
 
@@ -379,19 +409,42 @@ class ReplicationSystemConfig(BaseModel):
     backup_config: Optional[BackupConfig] = None
     replication_config: Optional[ReplicationConfig] = None
     reconciliation_config: Optional[ReconciliationConfig] = None
-    target_catalogs: List[TargetCatalogConfig]
-    external_location_mapping: Optional[dict] = None
+    target_catalogs: List[TargetCatalogConfig] = []
+    cloud_url_mapping: Optional[dict] = None
+    storage_credential_config: Optional[StorageCredentialConfig] = None
+    external_location_config: Optional[ExternalLocationConfig] = None
     concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
     retry: Optional[RetryConfig] = Field(default_factory=RetryConfig)
     logging: Optional[LoggingConfig] = Field(default_factory=LoggingConfig)
 
-    @field_validator("target_catalogs")
-    @classmethod
-    def validate_target_catalogs(cls, v):
-        """Ensure at least one target catalog is configured."""
-        if not v:
-            raise ValueError("At least one target catalog must be configured")
-        return v
+    @model_validator(mode="after")
+    def validate_target_catalogs(self):
+        """Ensure at least one target catalog is configured unless only
+        metastore-level objects are being replicated."""
+        if not self.target_catalogs:
+            # Allow empty target_catalogs if only metastore-level objects are configured
+            if self.uc_object_types:
+                # Normalize to a list if a single enum value was provided
+                uc_types = (
+                    self.uc_object_types
+                    if isinstance(self.uc_object_types, list)
+                    else [self.uc_object_types]
+                )
+
+                metastore_only_types = {UCObjectType.STORAGE_CREDENTIAL, UCObjectType.EXTERNAL_LOCATION}
+                # Check if all configured types are metastore-level
+                if all(
+                    obj_type in metastore_only_types
+                    for obj_type in uc_types
+                ):
+                    return self
+            
+            raise ValueError(
+                "At least one target catalog must be configured unless only "
+                "metastore-level objects (storage_credential, external_location) "
+                "are being replicated"
+            )
+        return self
 
     @model_validator(mode="after")
     def merge_configs(self):
@@ -782,7 +835,7 @@ class RunResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     operation_type: str
-    catalog_name: str
+    catalog_name: Optional[str] = None
     schema_name: Optional[str] = None
     object_name: Optional[str] = None
     object_type: Optional[str] = None

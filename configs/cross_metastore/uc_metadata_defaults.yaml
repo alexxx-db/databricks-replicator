@@ -22,7 +22,13 @@ target_databricks_connect_config:
     secret_scope: "test_kr"
     secret_pat: "pat_target"
 
-external_location_mapping:
+storage_credential_config:
+  target_credential_type: "aws"
+  mapping:
+    aarontest: "arn:aws:iam::332745928618:role/ad-s3-multi-region-demo"
+    oneenv-adls: "arn:aws:iam::332745928618:role/ad-s3-multi-region-demo"
+
+cloud_url_mapping:
   "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/aaron2"
 
 audit_config:

@@ -24,7 +24,7 @@ target_databricks_connect_config:
     secret_scope: "test_kr"
     secret_pat: "pat_target"
 
-external_location_mapping:
+cloud_url_mapping:
   "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/aaron2"
 
 audit_config:

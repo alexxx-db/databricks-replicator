@@ -203,7 +203,6 @@ class BackupProvider(BaseProvider):
             self.logger.error(
                 f"Failed to add schema {schema_name} to shares: {str(e)}",
                 extra={"run_id": self.run_id, "operation": "backup"},
-                exc_info=True,
             )
             error_msg = f"Failed to add schema {schema_name} to shares: {str(e)}"
             status = "failed"
@@ -405,7 +404,6 @@ class BackupProvider(BaseProvider):
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "backup"},
-                exc_info=True,
             )
 
             return RunResult(
