@@ -5,12 +5,18 @@ This module provides utilities for interacting with Databricks catalogs,
 schemas, and tables.
 """
 
-from typing import List, Tuple, Optional
+from typing import Iterator, List, Tuple, Optional
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from databricks.connect import DatabricksSession
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import (
+    CatalogInfo,
+    ExternalLocationInfo,
+    SchemaInfo,
+    StorageCredentialInfo,
+)
 from pyspark.sql.functions import col
 
 from data_replication.audit.logger import DataReplicationLogger
@@ -1028,7 +1034,7 @@ class DatabricksOperations:
 
         return comment_maps_list
 
-    def get_catalog(self, catalog_name: str) -> dict:
+    def get_catalog(self, catalog_name: str) -> CatalogInfo:
         """
         Get source catalog info using workspace client.
 
@@ -1036,7 +1042,7 @@ class DatabricksOperations:
             catalog_name: Name of the catalog to get
 
         Returns:
-            Dictionary containing catalog information
+            CatalogInfo containing catalog information
 
         Raises:
             Exception: If getting catalog fails or workspace_client is None
@@ -1052,7 +1058,7 @@ class DatabricksOperations:
                 f"Failed to get source catalog {catalog_name}: {str(e)}"
             ) from e
 
-    def create_catalog(self, catalog_config: dict) -> dict:
+    def create_catalog(self, catalog_config: dict) -> CatalogInfo:
         """
         Create catalog using workspace client.
 
@@ -1060,7 +1066,7 @@ class DatabricksOperations:
             catalog_config: Dictionary containing catalog creation parameters
 
         Returns:
-            Created catalog information
+            CatalogInfo containing created catalog information
 
         Raises:
             Exception: If catalog creation fails or workspace_client is None
@@ -1074,7 +1080,7 @@ class DatabricksOperations:
         except Exception as e:
             raise Exception(f"Failed to create catalog: {str(e)}") from e
 
-    def update_catalog(self, catalog_config: dict) -> dict:
+    def update_catalog(self, catalog_config: dict) -> CatalogInfo:
         """
         Update catalog using workspace client.
 
@@ -1082,7 +1088,7 @@ class DatabricksOperations:
             catalog_config: Dictionary containing catalog update parameters
 
         Returns:
-            Updated catalog information
+            CatalogInfo containing updated catalog information
 
         Raises:
             Exception: If catalog update fails or workspace_client is None
@@ -1096,7 +1102,7 @@ class DatabricksOperations:
         except Exception as e:
             raise Exception(f"Failed to update catalog: {str(e)}") from e
 
-    def get_schema(self, full_name: str) -> dict:
+    def get_schema(self, full_name: str) -> SchemaInfo:
         """
         Get schema information using workspace client.
 
@@ -1104,7 +1110,7 @@ class DatabricksOperations:
             full_name: Full name of the schema (catalog.schema)
 
         Returns:
-            Dictionary containing schema information
+            SchemaInfo containing schema information
 
         Raises:
             Exception: If getting schema fails or workspace_client is None
@@ -1118,7 +1124,7 @@ class DatabricksOperations:
         except Exception as e:
             raise Exception(f"Failed to get schema {full_name}: {str(e)}") from e
 
-    def create_schema(self, schema_config: dict) -> dict:
+    def create_schema(self, schema_config: dict) -> SchemaInfo:
         """
         Create schema using workspace client.
 
@@ -1126,7 +1132,7 @@ class DatabricksOperations:
             schema_config: Dictionary containing schema creation parameters
 
         Returns:
-            Created schema information
+            SchemaInfo containing created schema information
 
         Raises:
             Exception: If schema creation fails or workspace_client is None
@@ -1140,7 +1146,7 @@ class DatabricksOperations:
         except Exception as e:
             raise Exception(f"Failed to create schema: {str(e)}") from e
 
-    def update_schema(self, schema_config: dict) -> dict:
+    def update_schema(self, schema_config: dict) -> SchemaInfo:
         """
         Update schema using workspace client.
 
@@ -1148,7 +1154,7 @@ class DatabricksOperations:
             schema_config: Dictionary containing schema update parameters
 
         Returns:
-            Updated schema information
+            SchemaInfo containing updated schema information
 
         Raises:
             Exception: If schema update fails or workspace_client is None
@@ -1161,3 +1167,192 @@ class DatabricksOperations:
             return updated_schema
         except Exception as e:
             raise Exception(f"Failed to update schema: {str(e)}") from e
+
+    def get_storage_credential(self, credential_name: str) -> StorageCredentialInfo:
+        """
+        Get source storage credential info using workspace client.
+
+        Args:
+            credential_name: Name of the storage credential to get
+
+        Returns:
+            StorageCredentialInfo containing storage credential information
+
+        Raises:
+            Exception: If getting catalog fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for catalog operations")
+
+        try:
+            source_storage_credential_info = (
+                self.workspace_client.storage_credentials.get(credential_name)
+            )
+            return source_storage_credential_info
+        except Exception as e:
+            raise Exception(
+                f"Failed to get source storage credential {credential_name}: {str(e)}"
+            ) from e
+
+    def create_storage_credential(
+        self, storage_credential_config: dict
+    ) -> StorageCredentialInfo:
+        """
+        Create storage credential using workspace client.
+
+        Args:
+            storage_credential_config: Dictionary containing storage credential creation parameters
+
+        Returns:
+            StorageCredentialInfo containing created storage credential information
+
+        Raises:
+            Exception: If storage credential creation fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception(
+                "WorkspaceClient is required for storage credential operations"
+            )
+
+        try:
+            created_storage_credential = (
+                self.workspace_client.storage_credentials.create(
+                    **storage_credential_config
+                )
+            )
+            return created_storage_credential
+        except Exception as e:
+            raise Exception(f"Failed to create storage credential: {str(e)}") from e
+
+    def update_storage_credential(
+        self, storage_credential_config: dict
+    ) -> StorageCredentialInfo:
+        """
+        Update storage credential using workspace client.
+
+        Args:
+            storage_credential_config: Dictionary containing storage credential update parameters
+
+        Returns:
+            StorageCredentialInfo containing updated storage credential information
+
+        Raises:
+            Exception: If storage credential update fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception(
+                "WorkspaceClient is required for storage credential operations"
+            )
+
+        try:
+            updated_storage_credential = (
+                self.workspace_client.storage_credentials.update(
+                    **storage_credential_config
+                )
+            )
+            return updated_storage_credential
+        except Exception as e:
+            raise Exception(f"Failed to update storage credential: {str(e)}") from e
+
+    def list_external_locations(self) -> Iterator[ExternalLocationInfo]:
+        """
+        List all external locations using workspace client.
+
+        Returns:
+            List of ExternalLocationInfo objects
+
+        Raises:
+            Exception: If listing external locations fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for external location operations")
+
+        try:
+            external_locations = list(self.workspace_client.external_locations.list())
+            return external_locations
+        except Exception as e:
+            raise Exception(f"Failed to list external locations: {str(e)}") from e
+
+    def get_external_location(self, location_name: str) -> ExternalLocationInfo:
+        """
+        Get external location info using workspace client.
+
+        Args:
+            location_name: Name of the external location to get
+
+        Returns:
+            ExternalLocationInfo containing external location information
+
+        Raises:
+            Exception: If getting external location fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for external location operations")
+
+        try:
+            external_location_info = self.workspace_client.external_locations.get(location_name)
+            return external_location_info
+        except Exception as e:
+            raise Exception(
+                f"Failed to get external location {location_name}: {str(e)}"
+            ) from e
+
+    def create_external_location(
+        self, external_location_config: dict
+    ) -> ExternalLocationInfo:
+        """
+        Create external location using workspace client.
+
+        Args:
+            external_location_config: Dictionary containing external location creation parameters
+
+        Returns:
+            ExternalLocationInfo containing created external location information
+
+        Raises:
+            Exception: If external location creation fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception(
+                "WorkspaceClient is required for external location operations"
+            )
+
+        try:
+            created_external_location = (
+                self.workspace_client.external_locations.create(
+                    **external_location_config
+                )
+            )
+            return created_external_location
+        except Exception as e:
+            raise Exception(f"Failed to create external location: {str(e)}") from e
+
+    def update_external_location(
+        self, external_location_config: dict
+    ) -> ExternalLocationInfo:
+        """
+        Update external location using workspace client.
+
+        Args:
+            external_location_config: Dictionary containing external location update parameters
+
+        Returns:
+            ExternalLocationInfo containing updated external location information
+
+        Raises:
+            Exception: If external location update fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception(
+                "WorkspaceClient is required for external location operations"
+            )
+
+        try:
+            updated_external_location = (
+                self.workspace_client.external_locations.update(
+                    **external_location_config
+                )
+            )
+            return updated_external_location
+        except Exception as e:
+            raise Exception(f"Failed to update external location: {str(e)}") from e

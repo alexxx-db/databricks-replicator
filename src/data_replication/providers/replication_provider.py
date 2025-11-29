@@ -23,7 +23,7 @@ from ..exceptions import ReplicationError, TableNotFoundError
 from ..utils import (
     filter_common_maps,
     get_workspace_url_from_host,
-    map_external_location,
+    map_cloud_url,
     merge_maps,
     retry_with_logging,
     create_spark_session,
@@ -486,7 +486,6 @@ class ReplicationProvider(BaseProvider):
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "replication"},
-                exc_info=True,
             )
 
             return RunResult(
@@ -880,7 +879,6 @@ class ReplicationProvider(BaseProvider):
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "replication"},
-                exc_info=True,
             )
 
             return [
@@ -925,14 +923,14 @@ class ReplicationProvider(BaseProvider):
                 f"Cannot get location for source volume: {source_volume}"
             ) from exc
 
-        if not self.external_location_mapping:
+        if not self.cloud_url_mapping:
             raise ReplicationError(
-                "external_location_mapping is required for external volume replication"
+                "cloud_url_mapping is required for external volume replication"
             )
 
         # Map external location using utility function
-        target_location = map_external_location(
-            source_location, self.external_location_mapping
+        target_location = map_cloud_url(
+            source_location, self.cloud_url_mapping
         )
 
         if not target_location:
@@ -1033,14 +1031,14 @@ class ReplicationProvider(BaseProvider):
             )
 
         # Step 2: Determine external location mapping
-        if not self.external_location_mapping:
+        if not self.cloud_url_mapping:
             raise ReplicationError(
-                "external_location_mapping is required for external table replication"
+                "cloud_url_mapping is required for external table replication"
             )
 
         # Step 3: Map external location using utility function
-        target_location = map_external_location(
-            source_location, self.external_location_mapping
+        target_location = map_cloud_url(
+            source_location, self.cloud_url_mapping
         )
 
         if not target_location:

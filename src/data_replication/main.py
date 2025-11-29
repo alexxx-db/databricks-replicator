@@ -325,7 +325,7 @@ def main():
                 if cat.replication_config and cat.replication_config.enabled
             ]
 
-            if replication_catalogs:
+            if replication_catalogs or config.uc_object_types:
                 logger.info(f"Replication Begins {'-' * 60}")
                 logger.info(
                     f"Running replication operations for "

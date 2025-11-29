@@ -442,7 +442,6 @@ class ReconciliationProvider(BaseProvider):
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "reconciliation"},
-                exc_info=True,
             )
 
             return RunResult(

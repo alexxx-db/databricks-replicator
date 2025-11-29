@@ -15,15 +15,16 @@ This system provides incremental data and UC metadata replication capabilities b
   - External Tables
   - Volume Files
 - UC metadata
+  - Storage Credentials
+  - External Locations
   - Catalogs
-  - Schemas- 
+  - Schemas
   - Tags (catalog, schema, table, columns, views, volume)
   - Column Comments
   
 ## WIP
 - UC metadata
-  - Storage Credentials
-  - External Locations
+  - Tables
   - Views
   - Volumes
   - Permissions
