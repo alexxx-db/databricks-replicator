@@ -358,6 +358,19 @@ def setup_argument_parser():
         help="Streaming timeout in seconds for volume replication (default: 43200, minimum: 60)",
     )
 
+    parser.add_argument(
+        "--environment",
+        "-env",
+        type=str,
+        help="Environment name to use from environments.yaml. If not specified, uses the default environment.",
+    )
+
+    parser.add_argument(
+        "--env-path",
+        type=str,
+        help="Path to environments.yaml file. If not specified, searches in config directory and parent directories.",
+    )
+
     return parser
 
 

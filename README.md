@@ -1,19 +1,19 @@
-# Data Replication System for Databricks
+# UC Replication System for Databricks
 
-A Python plug-in solution to replicate data & uc metadata between Databricks envs. Support and accelerate workloads in multi-cloud migration, single-cloud migration, workspace migration, DR, backup and recovery, multi-cloud data mesh.
+A Python plug-in solution to replicate UC data & metadata between Databricks envs. Support and accelerate workloads in multi-cloud migration, single-cloud migration, workspace migration, DR, backup and recovery, multi-cloud data mesh.
 
 Cloud agnostic - cross metastore or same metastore replication
 
 ## Overview
 
-This system provides incremental data and UC metadata replication capabilities between Databricks env or within same env with D2D Delta Share and deep clone, with specialized handling for Streaming Tables. It supports multiple operation types that can be run independently or together.
+This system provides incremental data and UC metadata replication capabilities between Databricks env or within same env with D2D Delta Share, Deep Clone and Autoloader, with specialized handling for Streaming Tables. It supports multiple operation types that can be run independently or together.
 
 ## Supported Object Types
 - Data Replication
-  - Streaming Tables (data only, no checkpoints)
   - Managed Tables
   - External Tables
   - Volume Files
+  - Streaming Tables (data only, no checkpoints)
 - UC metadata
   - Storage Credentials
   - External Locations
@@ -31,18 +31,21 @@ This system provides incremental data and UC metadata replication capabilities b
   - Materialized Views
 
 ## Unsupported Object Types
-- Streaming checkpoints
+- Databricks Workspace Assets is not yet supported, but maybe considered in future roadmap
+- Streaming checkpoints are not replicated. Streaming state handling should be managed outside this solution.
 
 ## Supported Operation Types
-### Backup Operations - Export Streaming Table backing tables and add schema to Share
+### Backup Operations
 - For ST, deep clones ST backing tables from source to backup catalogs.
 - For all table and volume types, add containing schemas to share.
-- Not required for uc metadata replication
+- Not required for UC metadata replication
 
-### Replication Operations - Cross-metastore/same metastore incremental data and uc replication
+### Data Replication Operations
 - Deep clone tables across workspaces from shared catalog with schema enforcement
 - Incremental copy volume files across workspaces from shared catalog using autoloader
-- Replicate UC metadata from source uc to target uc (not through delta share)
+
+### Metadata Replication Operations
+- Replicate UC metadata from source uc to target uc using Databricks Connect and Databricks SDK
 
 ### Reconciliation Operations (Table only)
 - Row count validation
@@ -52,70 +55,60 @@ This system provides incremental data and UC metadata replication capabilities b
 ## Key Features
 
 ### Delta Sharing
-Flexibility to let the tool setup Delta share infra automatically for you, i.e. Recipient, Shares and Shared Catalogs. Alternatively, use existing Delta share infra
+Flexibility to let the tool setup Delta share infra automatically for you with default names, i.e. Recipient, Shares and Shared Catalogs. Alternatively, use existing Delta share infra
 
+### Run Anywhere
+- Run on both Serverless (recommended) and non-Serverless (DBR 16.4+).\
+- Run in source, target Databricks workspace, or outside Databricks
+- Run in cli, or deployed via DAB as workflow job
+
+### Flexible Configuration
+- YAML-based configuration with Pydantic validation
+- Hierarchical configuration with inheritance, i.e. table level -> schema level -> catalog level -> replication group
+- Environments to manage env specific connection and configurations
+- Oject types flexible selective replication
+- Catalog, schema and table flexible selective replication
+- Replicate from/into catalog of same or different name
+  
 ### Incremental Data Replication
-The system leverages Deep Clone and Autoloader for incrementality and replication performance
+The system leverages native Deep Clone and Autoloader for incrementality and replication performance
+- Deep clone for delta table
+- Autoloader for volume files with option to specify starting timestamp
+- Option to replicate external table as managed table to support managed table migration
 
 ### Streaming Table Handling
 The system automatically handles Streaming Tables complexities:
-- Export ST backing tables
+- Export ST backing tables to share
 - Constructs backing table path using pipeline ID
 - Deep clone ST backing tables rather than ST tables directly
 
 ### UC Metadata Replication
-Export and import UC metadata including support for tags
+Replicate UC metadata
+- Create or update target UC objects with Databricks SDK
+- Incremental tag replication
 
-### Run Anywhere
-- The tool can be executed in source, target workspace, or via external compute
-- The tool can be executed in cli, or deployed via DAB as workflow job
-
-### Flexible Configuration
-- YAML-based configuration with Pydantic validation
-- Hierarchical configuration with overrides, i.e. cli args -> yaml config file level -> yaml config catalog level
-- Catalog, schema and table flexible selective replication
-- Replicate from/into catalog of same or different name
-- Configurable concurrency and timeout settings
+### Parrallel Replication
+- Configurable concurrency with multithreading
+- Parrallel tables/volumes replication
+- Concurrent volume file copy
 
 ### Robust Logging & Error Handling
 - Configurable retry logic with exponential backoff
-- Graceful degradation where operations continue if individual tables fail
+- Graceful degradation where operations continue if individual object fail
 - Comprehensive error logging with run id and full stack traces
 - All operations tracked in audit tables for monitoring and alerting
 - Print out all executed SQL in DEBUG mode for easy troubleshooting
-
-### Logging Details
-Object level result details are recorded in configurable audit table location in either source or target workspace (default to target). Detailed execution log can be configured to store in json/txt in files
-#### Audit Log Table Schema
-| Column Name | Data Type | Description |
-|-------------|-----------|-------------|
-| run_id | STRING | Unique identifier for each execution run |
-| logging_time | TIMESTAMP | When the log entry was created |
-| operation_type | STRING | Type of operation (backup,replication,uc_replication,reconciliation) |
-| catalog_name | STRING | Target catalog name |
-| schema_name | STRING | Target schema name |
-| object_name | STRING | Target Object name |
-| object_type | STRING | Type of object (table, view, etc.) |
-| status | STRING | Operation status (success or failed) |
-| start_time | TIMESTAMP | Operation start time |
-| end_time | TIMESTAMP | Operation end time |
-| duration_seconds | DOUBLE | Operation duration in seconds |
-| error_message | STRING | Error message if operation failed |
-| details | STRING | Additional operation details in json string|
-| attempt_number | INT | Current retry attempt number |
-| max_attempts | INT | Maximum allowed retry attempts configured |
-| config_details | STRING | JSON serialized configuration details |
-| execution_user | STRING | User executing the operation |
+- Check <a href=./docs/loggings.md>here</a> to learn more about loggings
 
 ## Prerequisites
-- User or Service Principal in source and target workspace created with metastore admin right. If metastore admin permission is not available, check <a href=./permissions.md>here</a> to apply more granular UC access control
+- User or Service Principal in source and target workspace created with metastore admin right. If metastore admin permission is not available, check <a href=./docs/permissions.md>here</a> to apply more granular UC access control
 - For cross-metastore replication, enable Delta Sharing (DS) including network connectivity https://docs.databricks.com/aws/en/delta-sharing/set-up#gsc.tab=0
 
 - PAT or OAuth Token for user or sp created and stored in Databricks Key Vault.
 **Note**: if this tool is run in source workspace, only target workspace token secrets need to be created in source. Conversely, if run in target workspace, source token needs to be created in target.
 - Network connectivity to source or target workspace. e.g. if tool runs in source workspace, source data plane (outbound) should be able to establish connect to target workspace control plane (inbound). And vica versa.
 **Note**: UC replication requires connect to both source and target workspace using Databricks Connect.
-- If tool is running outside of Databricks Workspace and Serverless is unavailable in source and/or target workspace, cluster id for all-purpose cluster in source or/and target workspace
+- If tool is running outside of Databricks Workspace and Serverless is unavailable in source and/or target workspace, cluster id for all-purpose cluster in source or/and target workspace needs to be provided
 
 
 ## Getting Started
@@ -129,39 +122,70 @@ cd <repository folder>
 make setup
 source .venv/bin/activate
 ```
-3. Create your first configuration 
-- Clone and modify sample configs in configs folder. Configs with _default suffix allows you to set up replication with minimum configuration.
-- Detailed instruction are also provided in the sample config
+
+3. Configure <a href=./configs/environments.yaml>environments.yaml</a> file with connection details
+   
+4. **START REPLICATION**
+- Clone and modify sample configs in <a href=./configs>configs</a> folder. Configs with _default suffix allows you to set up replication using system generated default names and settings with minimum configuration.
+- High level replication steps are also descrbied in the sample config
 - For more comprehensive understanding of available configs, check <a href=./configs/README.yaml>README.yaml</a>
 
-4. Run - the system provides a CLI tool `data-replicator` with the following commands:
+
 ```bash
+# Replicate data in the following logical order - The solution can be flexibly configured to replicate all or selected objects and data. Some objects such as storage credentials might be created centrally with Terraform instead
+# Storage credentials -> External locations -> Catalogs -> Schemas -> Tables -> Volumes -> Materialized Views -> Views -> Tags -> Column Comments -> Permissions -> Volume Files
+
 # Check all available args
 data-replicator --help
 
 # Validate configuration without running
 data-replicator <config.yaml> --validate-only
 
-# Replicate catalog and schema
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types catalog,schema,catalog_tag,schema_tag
+# Replicate Storage credentials and External locations
+# Cloud identities setup (AWS role or Azure Managed Identity) with required access to cloud storage
+# Configure uc_metadata_defaults.yaml
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types storage_credential,external_location
 
-# Replicate delta tables for specific schemas
-data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
+# Replicate catalogs and schemas
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types catalog,schema --target-catalogs catalog1,catalog2,catalog3 
 
-# Replicate streaming tables for specific catalog - streaming tables must already exist in target
-data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
+# Replicate tables for specific catalogs
+# If streaming tables are in the catalog, they must firstly be created in the target env using DLT
+data-replicator configs/cross_metastore/all_tables_defaults.yaml --target-catalogs catalog1,catalog2,catalog3
 
-# Replicate volume for specific schema
+# Alternatively replicate tables for specific schemas under a catalog
+data-replicator configs/cross_metastore/all_tables_defaults.yaml --target-catalogs catalog1 --target-schemas bronze_1,silver_1
+
+# Alternatively replicate streaming tables only - streaming tables must already exist in target
+data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-catalogs catalog1 --target-schemas bronze_1,silver_1
+
+# Alternatively replicate delta tables only - streaming tables must already exist in target
+data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalogs catalog1 --target-schemas bronze_1,silver_1
+
+# Replicate volume for specific catalogs (Not yet supported - WIP)
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types volume --target-catalogs catalog1,catalog2,catalog3 
+
+# Replicate materialized views for specific catalogs (Not yet supported - WIP)
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types materialized_view --target-catalogs catalog1,catalog2,catalog3 
+
+# Replicate views for specific catalogs (Not yet supported - WIP)
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types view --target-catalogs catalog1,catalog2,catalog3
+
+# Replicate tags & comments
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types table_tag,column_tag,catalog_tag,schema_tag,volume_tag,column_comment --target-catalogs catalog1,catalog2,catalog3 
+
+# Replicate permissions for specific catalogs (Not yet supported - WIP)
+# Prerequisite: All user principals should be provisioned in the migrated workspace
+data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types permission --target-catalogs catalog1,catalog2,catalog3
+
+# Replicate volume files for specific schemas
 data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1
 
-# Replicate uc metadata - tags
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types table_tag,column_tag,catalog_tag,schema_tag,volume_tag
-
-# Replicate uc metadata - column comment
-data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --target-catalogs aaron_replication --uc-object-types column_comment
+# Alternatively replicate volume files for specific volume
+data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1 --target-volumes raw
 ```
 
-5. Deploy - the tool can be deployed as Workflow Job using DAB. Check resources folder
+5. Deploy - the tool can be deployed as Workflow Job using DAB. Check example job in <a href=./resources>resources</a> folder
 ```bash
 databricks bundle validate
 databricks bundle deploy

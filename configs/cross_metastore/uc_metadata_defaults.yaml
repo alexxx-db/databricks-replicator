@@ -8,20 +8,6 @@ version: "1.0"
 
 replication_group: "uc_metadata"
 
-source_databricks_connect_config:
-  name: "azure"
-  host: "https://adb-984752964297111.11.azuredatabricks.net"
-  token:
-    secret_scope: "test_kr"
-    secret_pat: "pat_source"
-
-target_databricks_connect_config:
-  name: "aws"
-  host: "https://e2-demo-field-eng.cloud.databricks.com"
-  token:
-    secret_scope: "test_kr"
-    secret_pat: "pat_target"
-
 storage_credential_config:
   target_credential_type: "aws"
   mapping:
@@ -36,7 +22,6 @@ audit_config:
 
 replication_config:
   enabled: true
-  overwrite_comments: false
 
 # target_catalogs:
 #   - catalog_name: "aaron_replication"

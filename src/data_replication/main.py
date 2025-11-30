@@ -226,6 +226,8 @@ def main():
             volume_delete_checkpoint_override=getattr(args, 'volume_delete_checkpoint', None),
             volume_autoloader_options_override=getattr(args, 'volume_autoloader_options', None),
             volume_streaming_timeout_secs_override=getattr(args, 'volume_streaming_timeout_secs', None),
+            environment_name=getattr(args, 'environment', None),
+            env_path=getattr(args, 'env_path', None),
         )
         logger = create_logger(config)
 

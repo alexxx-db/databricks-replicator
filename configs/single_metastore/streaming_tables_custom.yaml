@@ -7,14 +7,6 @@ version: "1.0"
 
 replication_group: "single_metastore_streaming_tables_defaults"
 
-source_databricks_connect_config:
-  name: "azure"
-  host: "https://adb-984752964297111.11.azuredatabricks.net"
-
-target_databricks_connect_config:
-  name: "azure"
-  host: "https://adb-984752964297111.11.azuredatabricks.net"
-
 audit_config:
   audit_table: "data_replication.audit.audit_logging"
 

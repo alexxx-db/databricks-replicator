@@ -233,6 +233,7 @@ class ReconciliationConfig(BaseModel):
 
 class TableConfig(BaseModel):
     """Configuration for individual tables."""
+
     model_config = ConfigDict(extra="forbid")
 
     table_name: str
@@ -249,6 +250,7 @@ class TableConfig(BaseModel):
 
 class VolumeConfig(BaseModel):
     """Configuration for individual volumes."""
+
     model_config = ConfigDict(extra="forbid")
 
     volume_name: str
@@ -265,6 +267,7 @@ class VolumeConfig(BaseModel):
 
 class SchemaConfig(BaseModel):
     """Configuration for individual schemas."""
+
     model_config = ConfigDict(extra="forbid")
 
     schema_name: str
@@ -289,6 +292,7 @@ class SchemaConfig(BaseModel):
 
 class TargetCatalogConfig(BaseModel):
     """Configuration for target catalogs."""
+
     model_config = ConfigDict(extra="forbid")
 
     catalog_name: str
@@ -371,8 +375,13 @@ class StorageCredentialConfig(BaseModel):
     """Configuration for storage credential replication."""
 
     model_config = ConfigDict(extra="forbid")
-    target_credential_type: CredentialType = Field(..., description="Target credential type: aws, azure, gcp, or cloudflare")
-    mapping: dict[str, str] = Field(..., description="Mapping of source storage credential names to target cloud principal IDs")
+    target_credential_type: CredentialType = Field(
+        ..., description="Target credential type: aws, azure, gcp, or cloudflare"
+    )
+    mapping: dict[str, str] = Field(
+        ...,
+        description="Mapping of source storage credential names to target cloud principal IDs",
+    )
 
 
 class ExternalLocationConfig(BaseModel):
@@ -380,8 +389,8 @@ class ExternalLocationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     external_locations: Optional[List[str]] = Field(
-        default=None, 
-        description="List of external location names to replicate. If not provided, all external locations matched in cloud_url_mapping will be replicated"
+        default=None,
+        description="List of external location names to replicate. If not provided, all external locations matched in cloud_url_mapping will be replicated",
     )
 
 
@@ -393,16 +402,91 @@ class RetryConfig(BaseModel):
     retry_delay_seconds: int = Field(default=5, ge=1)
 
 
+class EnvironmentConfig(BaseModel):
+    """Configuration for a single environment."""
+
+    model_config = ConfigDict(extra="forbid")
+    description: Optional[str] = None
+    is_default: Optional[bool] = False
+    source_databricks_connect_config: DatabricksConnectConfig
+    target_databricks_connect_config: DatabricksConnectConfig
+    audit_config: AuditConfig = None
+    cloud_url_mapping: Optional[dict] = None
+    storage_credential_config: Optional[StorageCredentialConfig] = None
+    external_location_config: Optional[ExternalLocationConfig] = None
+    table_types: Optional[List[TableType]] = None
+    volume_types: Optional[List[VolumeType]] = None
+    uc_object_types: Optional[List[UCObjectType]] = None
+    backup_config: Optional[BackupConfig] = None
+    replication_config: Optional[ReplicationConfig] = None
+    reconciliation_config: Optional[ReconciliationConfig] = None
+    target_catalogs: Optional[List[TargetCatalogConfig]] = None
+    concurrency: Optional[ConcurrencyConfig] = None
+    retry: Optional[RetryConfig] = None
+    logging: Optional[LoggingConfig] = None
+
+
+class EnvironmentsConfig(BaseModel):
+    """Configuration model for environments.yaml file."""
+
+    model_config = ConfigDict(extra="forbid")
+    version: str
+    environments: dict[str, EnvironmentConfig]
+
+    @model_validator(mode="after")
+    def validate_single_default(self):
+        """Ensure only one environment is marked as default."""
+        default_envs = [
+            env_name
+            for env_name, env_config in self.environments.items()
+            if env_config.is_default
+        ]
+
+        if len(default_envs) > 1:
+            raise ValueError(
+                f"Only one environment can be marked as default. "
+                f"Found multiple default environments: {default_envs}"
+            )
+
+        if len(default_envs) == 0:
+            raise ValueError(
+                "At least one environment must be marked as default (is_default: true)"
+            )
+
+        return self
+
+    def get_default_environment(self) -> tuple[str, EnvironmentConfig]:
+        """Get the default environment name and config."""
+        for env_name, env_config in self.environments.items():
+            if env_config.is_default:
+                return env_name, env_config
+        raise ValueError("No default environment found")
+
+    def get_environment(self, env_name: str) -> EnvironmentConfig:
+        """Get a specific environment by name."""
+        if env_name not in self.environments:
+            available_envs = list(self.environments.keys())
+            raise ValueError(
+                f"Environment '{env_name}' not found. "
+                f"Available environments: {available_envs}"
+            )
+        return self.environments[env_name]
+
+
 class ReplicationSystemConfig(BaseModel):
     """Root configuration model for the replication system."""
 
     model_config = ConfigDict(extra="forbid")
 
     version: str
+    env_name: Optional[str] = None
     replication_group: str
     source_databricks_connect_config: DatabricksConnectConfig
     target_databricks_connect_config: DatabricksConnectConfig
     audit_config: AuditConfig
+    cloud_url_mapping: Optional[dict] = None
+    storage_credential_config: Optional[StorageCredentialConfig] = None
+    external_location_config: Optional[ExternalLocationConfig] = None
     table_types: Optional[List[TableType]] = None
     volume_types: Optional[List[VolumeType]] = None
     uc_object_types: Optional[List[UCObjectType]] = None
@@ -410,9 +494,6 @@ class ReplicationSystemConfig(BaseModel):
     replication_config: Optional[ReplicationConfig] = None
     reconciliation_config: Optional[ReconciliationConfig] = None
     target_catalogs: List[TargetCatalogConfig] = []
-    cloud_url_mapping: Optional[dict] = None
-    storage_credential_config: Optional[StorageCredentialConfig] = None
-    external_location_config: Optional[ExternalLocationConfig] = None
     concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
     retry: Optional[RetryConfig] = Field(default_factory=RetryConfig)
     logging: Optional[LoggingConfig] = Field(default_factory=LoggingConfig)
@@ -431,14 +512,14 @@ class ReplicationSystemConfig(BaseModel):
                     else [self.uc_object_types]
                 )
 
-                metastore_only_types = {UCObjectType.STORAGE_CREDENTIAL, UCObjectType.EXTERNAL_LOCATION}
+                metastore_only_types = {
+                    UCObjectType.STORAGE_CREDENTIAL,
+                    UCObjectType.EXTERNAL_LOCATION,
+                }
                 # Check if all configured types are metastore-level
-                if all(
-                    obj_type in metastore_only_types
-                    for obj_type in uc_types
-                ):
+                if all(obj_type in metastore_only_types for obj_type in uc_types):
                     return self
-            
+
             raise ValueError(
                 "At least one target catalog must be configured unless only "
                 "metastore-level objects (storage_credential, external_location) "

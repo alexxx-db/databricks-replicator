@@ -17,6 +17,7 @@ from data_replication.config.models import (
     ConcurrencyConfig,
     LoggingConfig,
     TargetCatalogConfig,
+    EnvironmentsConfig,
 )
 from data_replication.utils import merge_dicts_recursive
 
@@ -49,6 +50,8 @@ class ConfigLoader:
         volume_delete_checkpoint_override: str = None,
         volume_autoloader_options_override: str = None,
         volume_streaming_timeout_secs_override: int = None,
+        environment_name: str = None,
+        env_path: str = None,
     ) -> ReplicationSystemConfig:
         """
         Load and validate configuration from a YAML file.
@@ -96,6 +99,11 @@ class ConfigLoader:
 
         if config_data is None:
             raise ConfigurationError(f"Configuration file is empty: {config_path}")
+
+        # Load environment configuration and merge with config data
+        config_data = ConfigLoader._load_and_merge_environment(
+            config_data, config_path, environment_name, env_path
+        )
 
         # Handle uc_object_types override
         if uc_object_types_override is not None:
@@ -482,6 +490,136 @@ class ConfigLoader:
                 yaml.dump(config_dict, f, default_flow_style=False, indent=2)
         except Exception as e:
             raise ConfigurationError(f"Error saving configuration: {e}") from e
+
+    @staticmethod
+    def _load_and_merge_environment(
+        config_data: dict, config_path: Path, environment_name: str = None, env_path: str = None
+    ) -> dict:
+        """
+        Load environment configuration and merge with main config. configs in environments.yaml
+        take precedence over those in the main config.
+
+        Args:
+            config_data: Main configuration data
+            config_path: Path to main config file
+            environment_name: Environment name to use, or None for default
+            env_path: Custom path to environments.yaml file, or None for auto-search
+
+        Returns:
+            Updated config data with environment settings merged
+
+        Raises:
+            ConfigurationError: If environment loading fails
+        """
+
+        if env_path:
+            # Use custom env_path if provided
+            environments_path = Path(env_path)
+            if not environments_path.exists():
+                raise ConfigurationError(
+                    f"Custom environments file not found: {environments_path}"
+                )
+        else:
+            # Look for environments.yaml in the same directory as config file
+            environments_path = config_path.parent / "environments.yaml"
+
+            # If not found in config directory, look in repo root
+            if not environments_path.exists():
+                current = config_path.parent
+                while current != current.parent:  # not root
+                    env_candidate = current / "environments.yaml"
+                    if env_candidate.exists():
+                        environments_path = env_candidate
+                        break
+                    current = current.parent
+
+            if not environments_path.exists():
+                raise ConfigurationError(
+                    f"environments.yaml not found. Looked in {config_path.parent} "
+                    f"and parent directories. Connection configurations are required but missing from config."
+                )
+
+        try:
+            # Load environments.yaml
+            with open(environments_path, "r", encoding="utf-8") as f:
+                env_data = yaml.safe_load(f)
+
+            # Validate environment configuration
+            environments_config = EnvironmentsConfig(**env_data)
+
+            # Determine which environment to use
+            if environment_name:
+                env_config = environments_config.get_environment(environment_name)
+            else:
+                environment_name, env_config = (
+                    environments_config.get_default_environment()
+                )
+
+            env_config_dict = env_config.model_dump()
+            env_config_dict.pop("description", None)
+            env_config_dict.pop("is_default", None)
+            env_config_dict["env_name"] = environment_name
+
+            config_data = merge_dicts_recursive(config_data, env_config_dict)
+
+            return config_data
+
+        except yaml.YAMLError as e:
+            raise ConfigurationError(f"Error parsing environments.yaml: {e}") from e
+        except ValidationError as e:
+            raise ConfigurationError(
+                f"Invalid environments.yaml configuration: {e}"
+            ) from e
+        except Exception as e:
+            raise ConfigurationError(
+                f"Error loading environment configuration: {e}"
+            ) from e
+
+    @staticmethod
+    def load_environments_config(
+        environments_path: Union[str, Path],
+    ) -> EnvironmentsConfig:
+        """
+        Load and validate environments configuration from file.
+
+        Args:
+            environments_path: Path to environments.yaml file
+
+        Returns:
+            Validated EnvironmentsConfig instance
+
+        Raises:
+            ConfigurationError: If loading or validation fails
+        """
+        environments_path = Path(environments_path)
+
+        if not environments_path.exists():
+            raise ConfigurationError(
+                f"Environments file not found: {environments_path}"
+            )
+
+        try:
+            with open(environments_path, "r", encoding="utf-8") as f:
+                env_data = yaml.safe_load(f)
+
+            if env_data is None:
+                raise ConfigurationError(
+                    f"Environments file is empty: {environments_path}"
+                )
+
+            environments_config = EnvironmentsConfig(**env_data)
+            return environments_config
+
+        except yaml.YAMLError as e:
+            raise ConfigurationError(f"Error parsing environments.yaml: {e}") from e
+        except ValidationError as e:
+            raise ConfigurationError(
+                f"Invalid environments.yaml configuration: {e}"
+            ) from e
+        except Exception as e:
+            raise ConfigurationError(
+                f"Error loading environments configuration: {e}"
+            ) from e
 
 
 # Convenience functions

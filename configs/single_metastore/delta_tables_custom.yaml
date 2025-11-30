@@ -6,14 +6,6 @@ version: "1.0"
 
 replication_group: "single_metastore_delta_tables_defaults"
 
-source_databricks_connect_config:
-  name: "azure"
-  host: "https://adb-984752964297111.11.azuredatabricks.net"
-
-target_databricks_connect_config:
-  name: "azure"
-  host: "https://adb-984752964297111.11.azuredatabricks.net"
-
 cloud_url_mapping:
   "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "abfss://deltalake@oneenvadls.dfs.core.windows.net/adnan"
 
