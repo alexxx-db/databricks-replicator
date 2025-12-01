@@ -162,7 +162,7 @@ data-replicator configs/cross_metastore/streaming_tables_defaults.yaml --target-
 # Alternatively replicate delta tables only - streaming tables must already exist in target
 data-replicator configs/cross_metastore/delta_tables_defaults.yaml --target-catalogs catalog1 --target-schemas bronze_1,silver_1
 
-# Replicate volume for specific catalogs (Not yet supported - WIP)
+# Replicate volume for specific catalogs
 data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-types volume --target-catalogs catalog1,catalog2,catalog3 
 
 # Replicate materialized views for specific catalogs (Not yet supported - WIP)

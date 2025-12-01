@@ -7,7 +7,7 @@ streaming tables, materialized views, and intermediate catalogs.
 
 from datetime import datetime, timezone
 from typing import List
-
+from databricks.sdk.service.catalog import VolumeType
 from data_replication.databricks_operations import DatabricksOperations
 
 # from delta.tables import DeltaTable
@@ -29,6 +29,10 @@ from ..utils import (
     create_spark_session,
     validate_spark_session,
     create_workspace_client,
+)
+from ..constants import (
+    DICT_FOR_CREATION_VOLUME,
+    DICT_FOR_UPDATE_VOLUME,
 )
 from .base_provider import BaseProvider
 
@@ -231,10 +235,14 @@ class ReplicationProvider(BaseProvider):
         """Process a single volume for replication."""
         results = []
         schema_name = schema_config.schema_name
-        # Check for volume replication first
+        # Check for volume metadata replication
         if (
-            self.catalog_config.volume_types
-            and len(self.catalog_config.volume_types) > 0
+            self.catalog_config.uc_object_types
+            and len(self.catalog_config.uc_object_types) > 0
+            and (
+                UCObjectType.VOLUME in self.catalog_config.uc_object_types
+                or UCObjectType.ALL in self.catalog_config.uc_object_types
+            )
         ):
             result = self._replicate_volume(schema_name, volume_config)
             results.extend(result)
@@ -251,6 +259,13 @@ class ReplicationProvider(BaseProvider):
                 schema_name,
                 volume_config,
             )
+            results.extend(result)
+        # Check for volume replication first
+        if (
+            self.catalog_config.volume_types
+            and len(self.catalog_config.volume_types) > 0
+        ):
+            result = self._replicate_volume_files(schema_name, volume_config)
             results.extend(result)
         if results:
             self.audit_logger.log_results(results)
@@ -549,7 +564,7 @@ class ReplicationProvider(BaseProvider):
             f"File ingestion details are logged in: {detail_ingestion_logging_table}"
         )
 
-    def _replicate_volume(
+    def _replicate_volume_files(
         self, schema_name: str, volume_config: VolumeConfig
     ) -> List[RunResult]:
         """
@@ -898,50 +913,6 @@ class ReplicationProvider(BaseProvider):
                 )
             ]
 
-    def _build_external_volume_query(
-        self, source_volume: str, target_volume: str
-    ) -> str:
-        """
-        Build query for external volume replication using location mapping.
-
-        Args:
-            source_volume: Source volume name
-            target_volume: Target volume name
-
-        Returns:
-            SQL query to create external volume
-        """
-        # Get source volume location
-        try:
-            source_location = (
-                self.spark.sql(f"DESCRIBE VOLUME {source_volume}")
-                .filter("info_name = 'Volume Path'")
-                .collect()[0]["info_value"]
-            )
-        except Exception as exc:
-            raise ReplicationError(
-                f"Cannot get location for source volume: {source_volume}"
-            ) from exc
-
-        if not self.cloud_url_mapping:
-            raise ReplicationError(
-                "cloud_url_mapping is required for external volume replication"
-            )
-
-        # Map external location using utility function
-        target_location = map_cloud_url(
-            source_location, self.cloud_url_mapping
-        )
-
-        if not target_location:
-            raise ReplicationError(
-                f"No external location mapping found for source volume location: {source_location}"
-            )
-
-        return (
-            f"CREATE VOLUME IF NOT EXISTS {target_volume} LOCATION '{target_location}'"
-        )
-
     def _replicate_via_intermediate(
         self,
         source_table: str,
@@ -1037,9 +1008,7 @@ class ReplicationProvider(BaseProvider):
             )
 
         # Step 3: Map external location using utility function
-        target_location = map_cloud_url(
-            source_location, self.cloud_url_mapping
-        )
+        target_location = map_cloud_url(source_location, self.cloud_url_mapping)
 
         if not target_location:
             raise ReplicationError(
@@ -1057,8 +1026,8 @@ class ReplicationProvider(BaseProvider):
         # Step 4: Deep clone to target location if copy_files is enabled
         if replication_config.copy_files:
             step1_query = self._build_deep_clone_query(
-            source_table, f"delta.`{target_location}`", None, replication_config
-        )
+                source_table, f"delta.`{target_location}`", None, replication_config
+            )
 
             # Execute the deep clone
             result1, last_exception, attempt, max_attempts = replication_operation(
@@ -1102,27 +1071,12 @@ class ReplicationProvider(BaseProvider):
             step2_query,
         )
 
-    def _build_insert_overwrite_query(
-        self, source_table: str, target_table: str
-    ) -> str:
-        """Build insert overwrite query based on enforce_schema setting."""
-        replication_config = self.catalog_config.replication_config
-
-        if replication_config.enforce_schema:
-            # Use SELECT * (all fields)
-            return f"INSERT OVERWRITE {target_table} SELECT * FROM {source_table}"
-        else:
-            # Get common fields between source and target
-            common_fields = self.db_ops.get_common_fields(source_table, target_table)
-            if common_fields:
-                field_list = "`" + "`,`".join(common_fields) + "`"
-                return f"INSERT OVERWRITE {target_table} ({field_list}) SELECT {field_list} FROM {source_table}"
-
-            # Fallback to SELECT * if no common fields found
-            return f"INSERT OVERWRITE {target_table} SELECT * FROM {source_table}"
-
     def _build_deep_clone_query(
-        self, source_table: str, target_table: str, pipeline_id: str = None, replication_config=None
+        self,
+        source_table: str,
+        target_table: str,
+        pipeline_id: str = None,
+        replication_config=None,
     ) -> str:
         """Build deep clone query."""
 
@@ -1544,6 +1498,216 @@ class ReplicationProvider(BaseProvider):
             volume_name=volume_name,
         )
         run_results.append(run_result)
+        return run_results
+
+    def _replicate_volume(
+        self, schema_name: str, volume_config: VolumeConfig
+    ) -> List[RunResult]:
+        """
+        Replicate volume from source to target using workspace client.
+
+        Args:
+            schema_name: Schema name
+            volume_config: VolumeConfig object for the volume to replicate
+
+        Returns:
+            List[RunResult]: Results for the volume replication operation
+        """
+        start_time = datetime.now(timezone.utc)
+        run_results = []
+        replication_config = volume_config.replication_config
+        volume_name = volume_config.volume_name
+        source_catalog = replication_config.source_catalog
+        target_catalog = self.catalog_config.catalog_name
+        source_volume_full_name = f"{source_catalog}.{schema_name}.{volume_name}"
+        target_volume_full_name = f"{target_catalog}.{schema_name}.{volume_name}"
+        attempt = 1
+        max_attempts = self.retry.max_attempts
+        last_exception = None
+
+        dict_for_creation = DICT_FOR_CREATION_VOLUME.copy()
+        dict_for_update = DICT_FOR_UPDATE_VOLUME.copy()
+
+        try:
+            self.logger.info(
+                f"Starting volume metadata replication: {source_volume_full_name} -> {target_volume_full_name}",
+                extra={"run_id": self.run_id, "operation": "uc_replication"},
+            )
+
+            # Get source volume info using source dbops
+            source_volume_info = self.source_dbops.get_volume(source_volume_full_name)
+
+            dict_for_creation = {
+                k: getattr(source_volume_info, k, None)
+                for k, v in source_volume_info.as_dict().items()
+                if k in dict_for_creation.keys()
+            }
+
+            # Ensure catalog_name, schema_name and name are set correctly for target
+            dict_for_creation["catalog_name"] = target_catalog
+            dict_for_creation["schema_name"] = schema_name
+            dict_for_creation["name"] = volume_name
+
+            dict_for_update = {
+                k: getattr(source_volume_info, k, None)
+                for k, v in source_volume_info.as_dict().items()
+                if k in dict_for_update.keys()
+            }
+            # Ensure full_name is set correctly for target
+            dict_for_update["full_name"] = target_volume_full_name
+
+            # Handle storage location for external volumes
+            source_storage_location = getattr(
+                source_volume_info, "storage_location", None
+            )
+            target_storage_location = None
+
+            # Check if replicate_as_managed is enabled
+            if getattr(replication_config, "replicate_as_managed", False):
+                self.logger.info(
+                    "Creating volume as managed due to replicate_as_managed=true.",
+                    extra={
+                        "run_id": self.run_id,
+                        "operation": "uc_replication",
+                    },
+                )
+
+                dict_for_creation["volume_type"] = VolumeType.MANAGED
+            else:
+                if (
+                    source_storage_location
+                    and source_volume_info.volume_type == VolumeType.EXTERNAL
+                ):
+                    if self.cloud_url_mapping:
+                        # Map external location using utility function
+                        target_storage_location = map_cloud_url(
+                            source_storage_location, self.cloud_url_mapping
+                        )
+                        if target_storage_location is None:
+                            raise ReplicationError(
+                                f"No external location mapping found for source volume storage location: {source_storage_location}. "
+                                f"Cannot replicate external volume without proper mapping. "
+                                f"Set replicate_as_managed=true to create as managed volume instead."
+                            )
+                    else:
+                        raise ReplicationError(
+                            f"Source volume {source_volume_full_name} has storage location: {source_storage_location} "
+                            f"but cloud_url_mapping is not configured. "
+                            f"Cannot replicate external volume without proper mapping. "
+                            f"Set replicate_as_managed=true to create as managed volume instead."
+                        )
+
+            dict_for_creation["storage_location"] = target_storage_location
+
+            # Check if target volume already exists
+            volume_exists = False
+            target_volume_info = None
+            try:
+                target_volume_info = self.target_dbops.get_volume(
+                    target_volume_full_name
+                )
+                volume_exists = True
+                self.logger.info(
+                    f"Target volume {target_volume_full_name} already exists, will update properties",
+                    extra={"run_id": self.run_id, "operation": "uc_replication"},
+                )
+            except Exception:
+                # Volume doesn't exist, will create it
+                pass
+
+            if not volume_exists:
+                # Create the volume
+                _ = self.target_dbops.create_volume(dict_for_creation)
+                self.logger.info(
+                    f"Successfully created volume {target_volume_full_name}",
+                    extra={"run_id": self.run_id, "operation": "uc_replication"},
+                )
+            else:
+                # Update existing volume properties if needed
+                target_volume_for_update = {
+                    k: getattr(target_volume_info, k, None)
+                    for k, v in target_volume_info.as_dict().items()
+                    if k in dict_for_update.keys()
+                }
+
+                if dict_for_update != target_volume_for_update:
+                    _ = self.target_dbops.update_volume(dict_for_update)
+                    self.logger.info(
+                        f"Successfully updated volume {target_volume_full_name}",
+                        extra={"run_id": self.run_id, "operation": "uc_replication"},
+                    )
+
+            end_time = datetime.now(timezone.utc)
+            duration = (end_time - start_time).total_seconds()
+
+            self.logger.info(
+                f"Volume metadata replication completed successfully: {source_volume_full_name} -> {target_volume_full_name} ({duration:.2f}s)",
+                extra={"run_id": self.run_id, "operation": "uc_replication"},
+            )
+
+            run_results.append(
+                RunResult(
+                    operation_type="uc_replication",
+                    catalog_name=target_catalog,
+                    schema_name=schema_name,
+                    object_name=volume_name,
+                    object_type="volume",
+                    status="success",
+                    start_time=start_time.isoformat(),
+                    end_time=end_time.isoformat(),
+                    duration_seconds=duration,
+                    details={
+                        "source_volume": source_volume_full_name,
+                        "target_volume": target_volume_full_name,
+                        "source_volume_type": source_volume_info.volume_type.value,
+                        "source_storage_location": source_storage_location,
+                        "target_storage_location": target_storage_location,
+                        "volume_existed": volume_exists,
+                    },
+                    attempt_number=attempt,
+                    max_attempts=max_attempts,
+                )
+            )
+
+        except Exception as e:
+            last_exception = e
+            end_time = datetime.now(timezone.utc)
+            duration = (end_time - start_time).total_seconds()
+
+            if not isinstance(e, ReplicationError):
+                e = ReplicationError(
+                    f"Volume metadata replication operation failed: {str(e)}"
+                )
+
+            error_msg = f"Failed to replicate volume metadata {source_volume_full_name} -> {target_volume_full_name}: {str(e)}"
+            self.logger.error(
+                error_msg,
+                extra={"run_id": self.run_id, "operation": "uc_replication"},
+            )
+            if last_exception:
+                error_msg += f" | Last error: {str(last_exception)}"
+
+            run_results.append(
+                RunResult(
+                    operation_type="uc_replication",
+                    catalog_name=target_catalog,
+                    schema_name=schema_name,
+                    object_name=volume_name,
+                    object_type="volume",
+                    status="failed",
+                    start_time=start_time.isoformat(),
+                    end_time=end_time.isoformat(),
+                    duration_seconds=duration,
+                    error_message=error_msg,
+                    details={
+                        "source_volume": source_volume_full_name,
+                        "target_volume": target_volume_full_name,
+                    },
+                    attempt_number=attempt,
+                    max_attempts=max_attempts,
+                )
+            )
+
         return run_results
 
     def _replicate_column_comments(

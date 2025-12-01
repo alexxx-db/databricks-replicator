@@ -74,3 +74,17 @@ DICT_FOR_UPDATE_EXTERNAL_LOCATION = {
     "read_only": None,
     "skip_validation": None,
 }
+
+DICT_FOR_CREATION_VOLUME = {
+    "catalog_name": None,
+    "schema_name": None,
+    "name": None,
+    "volume_type": None,
+    "storage_location": None,
+    "comment": None,
+}
+
+DICT_FOR_UPDATE_VOLUME = {
+    "full_name": None,
+    "comment": None,
+}

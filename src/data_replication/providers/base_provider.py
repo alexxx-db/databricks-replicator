@@ -412,6 +412,7 @@ class BaseProvider(ABC):
                 self.catalog_config.uc_object_types
                 and (
                     UCObjectType.VOLUME_TAG in self.catalog_config.uc_object_types
+                    or UCObjectType.VOLUME in self.catalog_config.uc_object_types
                     or UCObjectType.ALL in self.catalog_config.uc_object_types
                 )
             ) or self.catalog_config.volume_types:

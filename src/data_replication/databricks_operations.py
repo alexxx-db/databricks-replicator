@@ -16,6 +16,7 @@ from databricks.sdk.service.catalog import (
     ExternalLocationInfo,
     SchemaInfo,
     StorageCredentialInfo,
+    VolumeInfo,
 )
 from pyspark.sql.functions import col
 
@@ -1167,6 +1168,72 @@ class DatabricksOperations:
             return updated_schema
         except Exception as e:
             raise Exception(f"Failed to update schema: {str(e)}") from e
+
+    def get_volume(self, full_name: str) -> VolumeInfo:
+        """
+        Get volume information using workspace client.
+
+        Args:
+            full_name: Full name of the volume (catalog.schema.volume)
+
+        Returns:
+            VolumeInfo containing volume information
+
+        Raises:
+            Exception: If getting volume fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for volume operations")
+
+        try:
+            volume_info = self.workspace_client.volumes.read(full_name)
+            return volume_info
+        except Exception as e:
+            raise Exception(f"Failed to get volume {full_name}: {str(e)}") from e
+
+    def create_volume(self, volume_config: dict) -> VolumeInfo:
+        """
+        Create volume using workspace client.
+
+        Args:
+            volume_config: Dictionary containing volume creation parameters
+
+        Returns:
+            VolumeInfo containing created volume information
+
+        Raises:
+            Exception: If volume creation fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for volume operations")
+
+        try:
+            created_volume = self.workspace_client.volumes.create(**volume_config)
+            return created_volume
+        except Exception as e:
+            raise Exception(f"Failed to create volume: {str(e)}") from e
+
+    def update_volume(self, volume_config: dict) -> VolumeInfo:
+        """
+        Update volume using workspace client.
+
+        Args:
+            volume_config: Dictionary containing volume update parameters
+
+        Returns:
+            VolumeInfo containing updated volume information
+
+        Raises:
+            Exception: If volume update fails or workspace_client is None
+        """
+        if not self.workspace_client:
+            raise Exception("WorkspaceClient is required for volume operations")
+
+        try:
+            updated_volume = self.workspace_client.volumes.update(**volume_config)
+            return updated_volume
+        except Exception as e:
+            raise Exception(f"Failed to update volume: {str(e)}") from e
 
     def get_storage_credential(self, credential_name: str) -> StorageCredentialInfo:
         """

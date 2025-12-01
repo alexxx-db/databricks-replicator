@@ -471,7 +471,7 @@ class ReconciliationProvider(BaseProvider):
         """Perform schema comparison between source and target tables."""
         try:
             # Use consolidated schema comparison table
-            schema_comparison_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.recon_schema_comparison"
+            schema_comparison_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.{reconciliation_config.recon_schema_check_table}"
 
             source_catalog = source_table.split(".")[0]
             target_catalog = target_table.split(".")[0]
@@ -724,7 +724,7 @@ class ReconciliationProvider(BaseProvider):
         """Perform missing data check between source and target tables."""
         try:
             # Use consolidated missing data comparison table
-            missing_data_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.recon_missing_data_comparison"
+            missing_data_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.{reconciliation_config.recon_missing_data_table}"
 
             source_catalog = source_table.split(".")[0]
             target_catalog = target_table.split(".")[0]
@@ -891,7 +891,7 @@ class ReconciliationProvider(BaseProvider):
                     f"{total_missing} mismatches found for {source_table} vs {target_table}",
                     f"mismatches are recorded in {missing_data_table}",
                     extra={"run_id": self.run_id, "operation": "reconciliation"},
-                )            
+                )
 
             return {
                 "passed": total_missing == 0,

@@ -1,5 +1,7 @@
 ## Minimum Permission Required for User/Service Principal at Source Workspace
 
+Reference: <a href=https://docs.databricks.com/aws/en/data-governance/unity-catalog/manage-privileges/privileges>https://docs.databricks.com/aws/en/data-governance/unity-catalog/manage-privileges/privileges</a>
+
 ### Delta Sharing Infra Setup (Source):
 ```
 - CREATE_SHARE - for creating share. controlled by backup_config.create_share
@@ -24,7 +26,8 @@
 ```
 - USE_CATALOG, USE_SCHEMA, SELECT, READ_VOLUME on source catalogs
 - USE_CATALOG, USE_SCHEMA, SELECT ON system.information_schema schema
-- USE_SHARE, MODIFY_SHARE - backup_config.add_to_share
+- MANAGE on storage credential
+- MANAGE on external location
 ```
 
 ### Logging (Source): if audit_config.logging_workspace = 'source'
@@ -59,6 +62,8 @@
 - USE_CATALOG, CREATE_SCHEMA on target catalog
 - USE_CATALOG, USE_SCHEMA, CREATE_VOLUME, MODIFY, CREATE_TABLE, APPLY_TAG on target schema
 - USE_CATALOG, USE_SCHEMA, SELECT ON system.information_schema schema
+- CREATE EXTERNAL LOCATION
+- CREATE STORAGE CREDENTIAL
 ```
 
 ### Reconciliation (Target):
