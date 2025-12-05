@@ -11,7 +11,7 @@ import time
 from functools import wraps
 from typing import Dict, Any, TypeVar, Optional
 from enum import Enum
-from tenacity import retry, wait_exponential, stop_after_attempt
+from tenacity import RetryError, retry, wait_exponential, stop_after_attempt
 from pydantic import BaseModel
 from databricks.connect import DatabricksSession
 from databricks.sdk import WorkspaceClient
@@ -465,3 +465,22 @@ def recursive_substitute(obj, substitute_value, target_pattern=""):
 
     # Return primitive types as-is (int, float, bool, etc.)
     return obj
+
+def unwrap_retry_error(error: Exception) -> str:
+    """
+    Unwrap RetryError to get the actual underlying exception message.
+    
+    Args:
+        error: The exception to unwrap
+        
+    Returns:
+        String representation of the underlying error
+    """
+    if isinstance(error, RetryError):
+        # Get the last attempt's exception
+        if hasattr(error, 'last_attempt') and error.last_attempt:
+            if hasattr(error.last_attempt, 'exception'):
+                return str(error.last_attempt.exception())
+            elif hasattr(error.last_attempt, 'result'):
+                return str(error.last_attempt.result())
+    return str(error)
