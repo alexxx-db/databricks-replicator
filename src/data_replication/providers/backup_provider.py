@@ -135,10 +135,10 @@ class BackupProvider(BaseProvider):
 
         return backup_config.source_catalog
 
-    def process_schema_concurrently(
+    def process_schema(
         self,
         schema_config: SchemaConfig,
-    ) -> List[RunResult]:
+    ):
         """Override to add backup-specific schema setup."""
         backup_config = schema_config.backup_config
 
@@ -170,10 +170,10 @@ class BackupProvider(BaseProvider):
         self.logger.info(
             f"""Processing streaming tables only for in schema {schema_config.schema_name}."""
         )
-
-        table_results = super().process_schema_concurrently(schema_config)
+        schema_tables = []
+        table_results, schema_tables, _ = super().process_schema(schema_config)
         results.extend(table_results)
-        return results
+        return results, schema_tables, []
 
     def _add_schema_to_shares(self, schema_name: str, backup_config) -> RunResult:
         """Add schema to delta shares and return a RunResult for the operation."""

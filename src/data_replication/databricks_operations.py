@@ -274,7 +274,7 @@ class DatabricksOperations:
                 table_name, is_included = future.result()
                 if is_included:
                     filtered_tables.append(table_name)
-
+        executor.shutdown(wait=True)
         return filtered_tables
 
     def get_all_schemas(self, catalog_name: str) -> List[str]:

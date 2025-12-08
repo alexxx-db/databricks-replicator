@@ -268,12 +268,14 @@ target_catalogs:
 
 # Optional: Concurrency settings at replication group level
 concurrency:
-  # Optional: no of parallel threads for table and volume replication in a schema. default is 8.
+  # Optional: whether to process schemas in serial. default is false. all tables in the catalog will be processed in parallel if set to false.
+  process_schemas_in_serial: false
+  # Optional: no of parallel threads for table and volume replication. default is 8.
   max_workers: 8
   # Optional: no of parallel threads for table filtering in a schema. default is 8.
   parallel_table_filter: 8
   # Optional: timeout for each task. default is 3600.
-  timeout_seconds: 3600
+  timeout_seconds: 1800
 
 # Optional: Retry settings at replication group level
 retry:

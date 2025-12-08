@@ -165,10 +165,10 @@ class ReplicationProvider(BaseProvider):
 
         return replication_config.source_catalog
 
-    def process_schema_concurrently(
+    def process_schema(
         self,
         schema_config: SchemaConfig,
-    ) -> List[RunResult]:
+    ):
         """Override to add replication-specific schema setup."""
         replication_config = schema_config.replication_config
         if not self.catalog_config.uc_object_types:
@@ -183,7 +183,7 @@ class ReplicationProvider(BaseProvider):
                 self.catalog_config.catalog_name, schema_config.schema_name
             )
 
-        return super().process_schema_concurrently(schema_config)
+        return super().process_schema(schema_config)
 
     def process_table(
         self,

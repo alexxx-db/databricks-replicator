@@ -55,9 +55,10 @@ class ConcurrencyConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    process_schemas_in_serial: bool = Field(default=False)
     max_workers: int = Field(default=8, ge=1, le=64)
     parallel_table_filter: int = Field(default=8, ge=1, le=64)
-    timeout_seconds: int = Field(default=3600, ge=60)
+    timeout_seconds: int = Field(default=1800, ge=60)
 
 
 class RetryConfig(BaseModel):
