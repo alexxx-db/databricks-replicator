@@ -476,7 +476,7 @@ class BaseProvider(ABC):
                             f"Completed table {self.get_operation_name()} for catalog {self.catalog_name}: "
                             f"{successful}/{total} operations successful"
                         )
-                
+
                 if schema_volume_list:
                     catalog_run_result = self._process_schema_volumes(
                         schema_volume_list, self.catalog_name, start_time
@@ -898,7 +898,7 @@ class BaseProvider(ABC):
                     results.extend(result)
                 finally:
                     self.processed_objects.append(f"{schema_name}.{volume_name}")
-                    
+
         executor.shutdown(wait=True)
 
         self.logger.info(

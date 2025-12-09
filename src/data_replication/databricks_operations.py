@@ -23,9 +23,6 @@ from pyspark.sql.functions import col
 from data_replication.audit.logger import DataReplicationLogger
 from data_replication.config.models import (
     RetryConfig,
-    TableType,
-    UCObjectType,
-    VolumeType,
 )
 from data_replication.exceptions import TableNotFoundError
 from data_replication.utils import (
@@ -96,6 +93,19 @@ class DatabricksOperations:
                     f"after {execution_time:.3f}s: {str(e)}"
                 )
             raise
+
+    def execute_query(self, sql_query: str, operation_context: str = ""):
+        """
+        Execute SQL query.
+
+        Args:
+            sql_query: The SQL query to execute
+            operation_context: Context description for the operation
+
+        Returns:
+            Result of the SQL execution
+        """
+        return self._execute_sql(sql_query, operation_context)
 
     def get_metastore_id(self) -> str:
         """

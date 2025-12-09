@@ -168,7 +168,7 @@ class BackupProvider(BaseProvider):
         # Set table types to only streaming tables for backup
         schema_config.table_types = [TableType.STREAMING_TABLE]
         self.logger.info(
-            f"""Processing streaming tables only for in schema {schema_config.schema_name}."""
+            f"""Processing streaming tables only for schema {schema_config.schema_name}."""
         )
         schema_tables = []
         table_results, schema_tables, _ = super().process_schema(schema_config)
