@@ -137,24 +137,37 @@ class ReplicationProvider(BaseProvider):
                 )
 
             # Create source catalog from share if needed
-            if replication_config.create_shared_catalog:
+            if (
+                replication_config.create_shared_catalog
+                or replication_config.dpm_backing_table_catalog
+            ):
                 sharing_identifier = self.source_databricks_config.sharing_identifier
                 if not sharing_identifier:
                     sharing_identifier = self.source_dbops.get_metastore_id()
                 provider_name = self.db_ops.get_provider_name(sharing_identifier)
-                self.logger.info(
-                    f"""Creating source catalog from share: {replication_config.source_catalog} using share name: {replication_config.share_name}"""
-                )
-                self.db_ops.create_catalog_using_share_if_not_exists(
-                    replication_config.source_catalog,
-                    provider_name,
-                    replication_config.share_name,
-                )
-                if replication_config.backup_catalog:
+                if replication_config.create_shared_catalog:
+                    self.logger.info(
+                        f"""Creating source catalog from share: {replication_config.source_catalog} using share name: {replication_config.share_name}"""
+                    )
                     self.db_ops.create_catalog_using_share_if_not_exists(
-                        replication_config.backup_catalog,
+                        replication_config.source_catalog,
                         provider_name,
-                        replication_config.backup_share_name,
+                        replication_config.share_name,
+                    )
+                    if replication_config.backup_catalog:
+                        self.db_ops.create_catalog_using_share_if_not_exists(
+                            replication_config.backup_catalog,
+                            provider_name,
+                            replication_config.backup_share_name,
+                        )
+                if replication_config.dpm_backing_table_catalog:
+                    self.logger.info(
+                        f"""Creating DPM backing table catalog from share: {replication_config.dpm_backing_table_catalog} using share name: {replication_config.dpm_backing_table_share_name}"""
+                    )
+                    self.db_ops.create_catalog_using_share_if_not_exists(
+                        replication_config.dpm_backing_table_catalog,
+                        provider_name,
+                        replication_config.dpm_backing_table_share_name,
                     )
 
             if replication_config.volume_config:
@@ -311,6 +324,7 @@ class ReplicationProvider(BaseProvider):
         step1_query = None
         step2_query = None
         dlt_flag = None
+        dlt_type = None
         attempt = 1
         max_attempts = table_config.retry.max_attempts
         retry = table_config.retry
@@ -325,8 +339,28 @@ class ReplicationProvider(BaseProvider):
             # Get source table type to determine replication strategy
             source_table_type = self.db_ops.get_table_type(source_table)
             if source_table_type.upper() == TableType.STREAMING_TABLE.upper():
-                backup_catalog = replication_config.backup_catalog
-                source_table = f"`{backup_catalog}`.`{schema_name}`.`{table_name}`"
+                table_exists = False
+                # For streaming tables, check if DPM backing table catalog is specified and use it as source if the table exists there
+                if replication_config.dpm_backing_table_catalog:
+                    source_table = f"`{replication_config.dpm_backing_table_catalog}`.`{schema_name}`.`{table_name}`"
+                    self.db_ops.refresh_table_metadata(source_table)
+                    table_exists = self.spark.catalog.tableExists(source_table)
+                # If not found in DPM backing table catalog, check backup catalog as fallback
+                if not table_exists:
+                    if replication_config.backup_catalog:
+                        backup_catalog = replication_config.backup_catalog
+                        source_table = (
+                            f"`{backup_catalog}`.`{schema_name}`.`{table_name}`"
+                        )
+                        self.db_ops.refresh_table_metadata(source_table)
+                        if not self.spark.catalog.tableExists(source_table):
+                            raise TableNotFoundError(
+                                f"{source_table} not found in dpm or backup catalog"
+                            )
+                    else:
+                        raise TableNotFoundError(
+                            "Backup catalog not specified for streaming table"
+                        )
 
             self.logger.info(
                 f"Starting replication: {source_table} -> {target_table}",
@@ -340,6 +374,18 @@ class ReplicationProvider(BaseProvider):
                 actual_target_table = table_details["table_name"]
                 dlt_flag = table_details["is_dlt"]
                 pipeline_id = table_details["pipeline_id"]
+                dlt_type = table_details["dlt_type"]
+                parent_table_id = table_details.get("parent_table_id")
+                if dlt_type == "dpm":
+                    # Prequisite: the executing user is authorized to grant MODIFY to itself. i.e. metastore admin or owner of the table
+                    # Explicitly grant access to dpm backing table before clone
+                    current_user = self.db_ops.get_current_user()
+                    sql = f"GRANT MODIFY ON TABLE {actual_target_table} TO `{current_user}`"
+                    self.logger.debug(
+                        f"Granting MODIFY on DPM backing table {actual_target_table} to user {current_user}",
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
+                    self.spark.sql(sql)
             except TableNotFoundError as exc:
                 table_details = self.db_ops.get_table_details(source_table)
                 if table_details["is_dlt"]:
@@ -377,7 +423,19 @@ class ReplicationProvider(BaseProvider):
                     f"Executing replication query: {query}",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
-                self.spark.sql(query)
+                if dlt_flag:
+                    # For DLT tables, catch and ignore specific parent table property error
+                    try:
+                        self.spark.sql(query)
+                    except Exception as e:
+                        if 'PARENT TABLE WITH ID' in str(e).upper():
+                            self.logger.info(
+                                "Parent table with id error, can be ignored for DLT table replication.",
+                                extra={"run_id": self.run_id, "operation": "replication"},
+                            )
+                else:
+                    self.spark.sql(query)
+
                 return True
 
             # Determine replication strategy based on table type and config
@@ -416,6 +474,7 @@ class ReplicationProvider(BaseProvider):
                     schema_name,
                     table_name,
                     pipeline_id,
+                    parent_table_id,
                     replication_operation,
                     replication_config,
                 )
@@ -432,6 +491,7 @@ class ReplicationProvider(BaseProvider):
                     source_table,
                     actual_target_table,
                     pipeline_id,
+                    parent_table_id,
                     replication_operation,
                     replication_config,
                 )
@@ -462,6 +522,7 @@ class ReplicationProvider(BaseProvider):
                             "source_table": source_table,
                             "table_type": source_table_type,
                             "dlt_flag": dlt_flag,
+                            "dlt_type": dlt_type,
                             "intermediate_catalog": replication_config.intermediate_catalog,
                             "step1_query": step1_query,
                             "step2_query": step2_query,
@@ -499,6 +560,7 @@ class ReplicationProvider(BaseProvider):
                         "source_table": source_table,
                         "table_type": source_table_type,
                         "dlt_flag": dlt_flag,
+                        "dlt_type": dlt_type,
                         "intermediate_catalog": replication_config.intermediate_catalog,
                         "step1_query": step1_query,
                         "step2_query": step2_query,
@@ -539,6 +601,7 @@ class ReplicationProvider(BaseProvider):
                         "source_table": source_table,
                         "table_type": source_table_type,
                         "dlt_flag": dlt_flag,
+                        "dlt_type": dlt_type,
                         "intermediate_catalog": replication_config.intermediate_catalog,
                         "step1_query": step1_query,
                         "step2_query": step2_query,
@@ -944,6 +1007,7 @@ class ReplicationProvider(BaseProvider):
         schema_name: str,
         table_name: str,
         pipeline_id: str,
+        parent_table_id: str,
         replication_operation,
         replication_config,
     ) -> tuple:
@@ -954,7 +1018,7 @@ class ReplicationProvider(BaseProvider):
 
         # Step 1: Deep clone to intermediate
         step1_query = self._build_deep_clone_query(
-            source_table, intermediate_table, None, replication_config
+            source_table, intermediate_table, None, None, replication_config
         )
 
         result1, last_exception, attempt, max_attempts = replication_operation(
@@ -972,7 +1036,7 @@ class ReplicationProvider(BaseProvider):
 
         # Use deep clone
         step2_query = self._build_deep_clone_query(
-            source_table, target_table, pipeline_id, replication_config
+            source_table, target_table, pipeline_id, parent_table_id, replication_config
         )
 
         return (
@@ -986,6 +1050,7 @@ class ReplicationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         pipeline_id: str,
+        parent_table_id: str,
         replication_operation,
         replication_config,
     ) -> tuple:
@@ -993,7 +1058,7 @@ class ReplicationProvider(BaseProvider):
 
         # Use deep clone
         step1_query = self._build_deep_clone_query(
-            source_table, target_table, pipeline_id, replication_config
+            source_table, target_table, pipeline_id, parent_table_id, replication_config
         )
 
         return *replication_operation(step1_query), step1_query, None
@@ -1050,7 +1115,7 @@ class ReplicationProvider(BaseProvider):
         # Step 4: Deep clone to target location if copy_files is enabled
         if replication_config.copy_files:
             step1_query = self._build_deep_clone_query(
-                source_table, f"delta.`{target_location}`", None, replication_config
+                source_table, f"delta.`{target_location}`", None, None, replication_config
             )
 
             # Execute the deep clone
@@ -1100,6 +1165,7 @@ class ReplicationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         pipeline_id: str = None,
+        parent_table_id: str = None,
         replication_config=None,
     ) -> str:
         """Build deep clone query."""
@@ -1107,6 +1173,9 @@ class ReplicationProvider(BaseProvider):
         sql = f"CREATE OR REPLACE TABLE {target_table} DEEP CLONE {source_table} "
 
         if pipeline_id:
+            if parent_table_id:
+                # For dlt streaming tables/materialized views, use CREATE OR REPLACE TABLE with pipelineId and parentTableId properties
+                return f"{sql} TBLPROPERTIES ('pipelines.pipelineId'='{pipeline_id}', 'spark.sql.internal.pipelines.parentTableId'='{parent_table_id}')"
             # For dlt streaming tables/materialized views, use CREATE OR REPLACE TABLE with pipelineId property
             return f"{sql} TBLPROPERTIES ('pipelines.pipelineId'='{pipeline_id}')"
 

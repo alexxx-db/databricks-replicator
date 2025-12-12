@@ -98,6 +98,8 @@ backup_config:
   backup_schema_prefix: null
   # Optional: share name for streaming table backing table. default to <backup_catalog>_share
   backup_share_name: "__replication_internal_catalog_example_to_aws_share"
+  # Optional: backing table share name for dpm dlt backing table. default to __replication_internal_dpm_<catalog_name>_to_<target_databricks_connect_config.name>_share
+  dpm_backing_table_share_name: "__replication_internal_dpm_catalog_example_to_aws_share"
   # streaming table specific configurations end here: ------------------------
 
 # Optional: replication configuration (at replication group level)
@@ -138,6 +140,10 @@ replication_config:
   backup_share_name: "__replication_internal_catalog_example_to_aws_share"
   # Optional: catalog created from backing table share. default to __replication_internal_<catalog_name>_from_<source_databricks_connect_config.name>_shared
   backup_catalog: "__replication_internal_catalog_example_from_azure_shared"
+  # Optional: backing table share name for dpm dlt backing table. default to __replication_internal_dpm_<catalog_name>_to_<target_databricks_connect_config.name>_share
+  dpm_backing_table_share_name: "__replication_internal_dpm_catalog_example_to_aws_share"
+  # Optional: catalog created from dpm dlt backing table share. default to __replication_internal_dpm_<catalog_name>_from_<source_databricks_connect_config.name>_shared
+  dpm_backing_table_catalog: "__replication_internal_dpm_catalog_example_from_azure_shared"
   # Streaming table specific configurations end here: ------------------------
 
   # External table specific configurations start here: ------------------------

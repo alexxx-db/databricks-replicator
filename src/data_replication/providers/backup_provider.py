@@ -108,31 +108,39 @@ class BackupProvider(BaseProvider):
                 backup_config.recipient_name = recipient_name
 
         # Create delta shares at catalog level if configured
-        if backup_config.create_share:
+        if backup_config.create_share or backup_config.dpm_backing_table_share_name:
             sharing_identifier = self.target_databricks_config.sharing_identifier
             if not sharing_identifier:
                 sharing_identifier = self.target_dbops.get_metastore_id()
             backup_config.recipient_name = self.db_ops.get_recipient_name(
                 sharing_identifier
             )
-            self.logger.info(
-                f"""Creating delta share: {backup_config.share_name} and granting access to recipient: {backup_config.recipient_name}"""
-            )
-            self.db_ops.create_delta_share(
-                backup_config.share_name,
-                backup_config.recipient_name,
-            )
-
-            # Create backup delta shares at catalog level if configured
-            if backup_config.backup_share_name:
+            if backup_config.create_share:
                 self.logger.info(
-                    f"""Creating backup delta share: {backup_config.backup_share_name} and granting access to recipient: {backup_config.recipient_name}"""
+                    f"""Creating delta share: {backup_config.share_name} and granting access to recipient: {backup_config.recipient_name}"""
                 )
                 self.db_ops.create_delta_share(
-                    backup_config.backup_share_name,
+                    backup_config.share_name,
                     backup_config.recipient_name,
                 )
 
+                # Create backup delta shares at catalog level if configured
+                if backup_config.backup_share_name:
+                    self.logger.info(
+                        f"""Creating backup delta share: {backup_config.backup_share_name} and granting access to recipient: {backup_config.recipient_name}"""
+                    )
+                    self.db_ops.create_delta_share(
+                        backup_config.backup_share_name,
+                        backup_config.recipient_name,
+                    )
+            if backup_config.dpm_backing_table_share_name:
+                self.logger.info(
+                    f"""Creating DPM backing tables delta share: {backup_config.dpm_backing_table_share_name} and granting access to recipient: {backup_config.recipient_name}"""
+                )
+                self.db_ops.create_delta_share(
+                    backup_config.dpm_backing_table_share_name,
+                    backup_config.recipient_name,
+                )
         return backup_config.source_catalog
 
     def process_schema(
@@ -274,7 +282,7 @@ class BackupProvider(BaseProvider):
         table_name = table_config.table_name
         backup_config = table_config.backup_config
         source_catalog = backup_config.source_catalog
-
+        dpm_backing_table_share_name = backup_config.dpm_backing_table_share_name
         source_table = f"{source_catalog}.{schema_name}.{table_name}"
         backup_schema_name = self.get_backup_schema_name(schema_name, backup_config)
         backup_table = (
@@ -282,59 +290,76 @@ class BackupProvider(BaseProvider):
         )
         actual_source_table = None
         dlt_flag = None
-        backup_query = None
-        source_table_type = None
-        unset_query = None
+        dlt_type = None
+        step1_query = None
+        step2_query = None
         attempt = 1
         max_attempts = table_config.retry.max_attempts
 
         try:
             table_details = self.db_ops.get_table_details(source_table)
-            actual_source_table = table_details["table_name"]
-            dlt_flag = table_details["is_dlt"]
+            actual_source_table = table_details.get("table_name", None)
+            dlt_flag = table_details.get("is_dlt", None)
+            dlt_type = table_details.get("dlt_type", None)
 
-            if backup_config.backup_catalog:
-                self.logger.info(
-                    f"Starting backup: {source_table} -> {backup_table}",
-                    extra={"run_id": self.run_id, "operation": "backup"},
-                )
-                # Get source table type for audit logging
-                source_table_type = self.db_ops.get_table_type(source_table)
-
-                if source_table_type.upper() != TableType.STREAMING_TABLE.value.upper():
+            if dlt_flag:
+                if dlt_type == "legacy" and backup_config.backup_catalog:
                     self.logger.info(
-                        f"Skipping backup for table {source_table} of type {source_table_type}. Only streaming tables are backed up.",
+                        f"Starting backup legacy dlt backing table: {source_table} -> {backup_table}",
                         extra={"run_id": self.run_id, "operation": "backup"},
                     )
-                    return
 
-                # Perform backup using deep clone and unset parentTableId property
-                backup_query = f"""CREATE OR REPLACE TABLE {backup_table}
-                                DEEP CLONE {actual_source_table};
-                                """
-                unset_query = f"""ALTER TABLE {backup_table}
-                                UNSET TBLPROPERTIES (spark.sql.internal.pipelines.parentTableId)"""
+                    # Perform backup using deep clone and unset parentTableId property
+                    step1_query = f"""CREATE OR REPLACE TABLE {backup_table}
+                                    DEEP CLONE {actual_source_table};
+                                    """
+                    step2_query = f"""ALTER TABLE {backup_table}
+                                    UNSET TBLPROPERTIES (spark.sql.internal.pipelines.parentTableId)"""
+                elif dlt_type == "dpm":
+                    self.logger.info(
+                        f"Starting adding dpm dlt backing table to share: {source_table}",
+                        extra={"run_id": self.run_id, "operation": "backup"},
+                    )
+
+                    # Prequisite: the executing user is authorized to grant SELECT to itself. i.e. metastore admin or owner of the table
+                    # Explicitly grant access to dpm backing table before adding to share
+                    current_user = self.db_ops.get_current_user()
+                    step1_query = f"""GRANT SELECT ON TABLE {actual_source_table}
+                                    TO `{current_user}`;
+                                    """
+                    # Add backing table to share with original table name
+                    step2_query = f"""ALTER SHARE {dpm_backing_table_share_name}
+                                    ADD TABLE {actual_source_table} AS {schema_name}.{table_name};"""
+                else:
+                    raise BackupError(
+                        f"Unsupported DLT type for backup: {dlt_type} for table {source_table}"
+                    )
             else:
-                backup_query = "SELECT 'skipping backup operation.'"
-                unset_query = "SELECT 'skipping unset operation.'"
+                self.logger.info(
+                    f"Skipping backup for non-DLT table: {source_table}",
+                    extra={"run_id": self.run_id, "operation": "backup"},
+                )
+                return []
 
             # Use custom retry decorator with logging
             @retry_with_logging(table_config.retry, self.logger)
-            def backup_operation(backup_query: str, unset_query: str):
-                self.logger.debug(
-                    f"Executing backup query: {backup_query}",
-                    extra={"run_id": self.run_id, "operation": "backup"},
-                )
-                self.spark.sql(backup_query)
-                self.logger.debug(
-                    f"Executing unset query: {unset_query}",
-                    extra={"run_id": self.run_id, "operation": "backup"},
-                )
-                self.spark.sql(unset_query)
+            def backup_operation(step1_query: str, step2_query: str):
+                if step1_query:
+                    self.logger.debug(
+                        f"Executing step1 query: {step1_query}",
+                        extra={"run_id": self.run_id, "operation": "backup"},
+                    )
+                    self.spark.sql(step1_query)
+                if step2_query:
+                    self.logger.debug(
+                        f"Executing step2 query: {step2_query}",
+                        extra={"run_id": self.run_id, "operation": "backup"},
+                    )
+                    self.spark.sql(step2_query)
                 return True
 
             result, last_exception, attempt, max_attempts = backup_operation(
-                backup_query, unset_query
+                step1_query, step2_query
             )
 
             end_time = datetime.now(timezone.utc)
@@ -362,8 +387,9 @@ class BackupProvider(BaseProvider):
                             "backup_table": backup_table,
                             "backup_schema_name": backup_schema_name,
                             "source_table": actual_source_table,
-                            "table_type": source_table_type,
-                            "backup_query": backup_query,
+                            "dlt_type": dlt_type,
+                            "step1_query": step1_query,
+                            "step2_query": step2_query,
                             "backup_schema_prefix": backup_config.backup_schema_prefix,
                             "dlt_flag": dlt_flag,
                         },
@@ -400,8 +426,9 @@ class BackupProvider(BaseProvider):
                         "backup_table": backup_table,
                         "backup_schema_name": backup_schema_name,
                         "source_table": actual_source_table,
-                        "table_type": source_table_type,
-                        "backup_query": backup_query,
+                        "dlt_type": dlt_type,
+                        "step1_query": step1_query,
+                        "step2_query": step2_query,
                         "backup_schema_prefix": backup_config.backup_schema_prefix,
                         "dlt_flag": dlt_flag,
                     },
@@ -440,8 +467,9 @@ class BackupProvider(BaseProvider):
                         "backup_table": backup_table,
                         "backup_schema_name": backup_schema_name,
                         "source_table": actual_source_table,
-                        "table_type": source_table_type,
-                        "backup_query": backup_query,
+                        "dlt_type": dlt_type,
+                        "step1_query": step1_query,
+                        "step2_query": step2_query,
                         "backup_schema_prefix": backup_config.backup_schema_prefix,
                         "dlt_flag": dlt_flag,
                     },

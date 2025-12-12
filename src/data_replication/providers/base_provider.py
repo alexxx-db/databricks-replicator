@@ -441,20 +441,21 @@ class BaseProvider(ABC):
                 results.extend(schema_results)
                 schema_table_list.extend(schema_tables)
                 schema_volume_list.extend(schema_volumes)
+                
+                if self.catalog_config.concurrency.process_schemas_in_serial:
+                    if schema_results:
+                        # Log summary info to regular logger
+                        successful = sum(
+                            1
+                            for r in schema_results
+                            if schema_results and r.status == "success"
+                        )
+                        total = len(schema_results) if schema_results else 0
 
-                if schema_results:
-                    # Log summary info to regular logger
-                    successful = sum(
-                        1
-                        for r in schema_results
-                        if schema_results and r.status == "success"
-                    )
-                    total = len(schema_results) if schema_results else 0
-
-                    self.logger.info(
-                        f"Completed {self.get_operation_name()} for schema {self.catalog_name}.{schema_config.schema_name}: "
-                        f"{successful}/{total} operations successful"
-                    )
+                        self.logger.info(
+                            f"Completed {self.get_operation_name()} for schema {self.catalog_name}.{schema_config.schema_name}: "
+                            f"{successful}/{total} operations successful"
+                        )
 
             if not self.catalog_config.concurrency.process_schemas_in_serial:
                 catalog_run_result = []

@@ -179,6 +179,7 @@ class BackupConfig(BaseModel):
     backup_catalog_location: Optional[str] = None
     backup_share_name: Optional[str] = None
     backup_schema_prefix: Optional[str] = None
+    dpm_backing_table_share_name: Optional[str] = None
 
     @field_validator("source_catalog", "backup_catalog")
     @classmethod
@@ -200,6 +201,8 @@ class ReplicationConfig(BaseModel):
     replicate_enable_predictive_optimization: Optional[bool] = False
     backup_share_name: Optional[str] = None
     backup_catalog: Optional[str] = None
+    dpm_backing_table_share_name: Optional[str] = None
+    dpm_backing_table_catalog: Optional[str] = None
     create_intermediate_catalog: Optional[bool] = False
     intermediate_catalog: Optional[str] = None
     intermediate_catalog_location: Optional[str] = None
@@ -725,26 +728,35 @@ class ReplicationSystemConfig(BaseModel):
 
                 # Assign default backup catalog
                 if (
-                    catalog.backup_config.backup_catalog is None
-                    and catalog.table_types
+                    catalog.table_types
                     and TableType.STREAMING_TABLE in catalog.table_types
                 ):
-                    catalog.backup_config.backup_catalog = default_backup_catalog
+                    if catalog.backup_config.backup_catalog is None:
+                        catalog.backup_config.backup_catalog = default_backup_catalog
 
-                # Default share name for streaming backup tables
-                default_backup_share_name = (
-                    f"{catalog.backup_config.backup_catalog}_share"
-                )
-
-                if (
-                    (
-                        catalog.backup_config.create_share
-                        or catalog.backup_config.add_to_share
+                    # Default share name for streaming backup tables
+                    default_backup_share_name = (
+                        f"{catalog.backup_config.backup_catalog}_share"
                     )
-                    and catalog.backup_config.backup_share_name is None
-                    and catalog.backup_config.backup_catalog is not None
-                ):
-                    catalog.backup_config.backup_share_name = default_backup_share_name
+
+                    if (
+                        (
+                            catalog.backup_config.create_share
+                            or catalog.backup_config.add_to_share
+                        )
+                        and catalog.backup_config.backup_share_name is None
+                        and catalog.backup_config.backup_catalog is not None
+                    ):
+                        catalog.backup_config.backup_share_name = (
+                            default_backup_share_name
+                        )
+
+                # Default share name for dpm streaming backup tables
+                default_dpm_backing_table_share_name = f"__replication_internal_dpm_{catalog.catalog_name}_to_{target_name}_share"
+                if not catalog.backup_config.dpm_backing_table_share_name:
+                    catalog.backup_config.dpm_backing_table_share_name = (
+                        default_dpm_backing_table_share_name
+                    )
 
                 # Derive default recipient names
                 if catalog.backup_config.recipient_name is None:
@@ -764,21 +776,27 @@ class ReplicationSystemConfig(BaseModel):
                                 f"{catalog.catalog_name}_to_{target_name}_share"
                             )
                         if (
-                            catalog.replication_config.backup_share_name is None
-                            and catalog.table_types
+                            catalog.table_types
                             and TableType.STREAMING_TABLE in catalog.table_types
                         ):
-                            catalog.replication_config.backup_share_name = f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
-                    if catalog.replication_config.source_catalog is None:
-                        catalog.replication_config.source_catalog = (
-                            f"{catalog.catalog_name}_from_{source_name}"
-                        )
+                            if not catalog.replication_config.backup_share_name:
+                                catalog.replication_config.backup_share_name = f"__replication_internal_{catalog.catalog_name}_to_{target_name}_share"
+
+                            if not catalog.replication_config.backup_catalog:
+                                catalog.replication_config.backup_catalog = f"__replication_internal_{catalog.catalog_name}_from_{source_name}_shared"
                     if (
-                        catalog.replication_config.backup_catalog is None
-                        and catalog.table_types
+                        catalog.table_types
                         and TableType.STREAMING_TABLE in catalog.table_types
                     ):
-                        catalog.replication_config.backup_catalog = f"__replication_internal_{catalog.catalog_name}_from_{source_name}_shared"
+                        if not catalog.replication_config.dpm_backing_table_share_name:
+                            catalog.replication_config.dpm_backing_table_share_name = f"__replication_internal_dpm_{catalog.catalog_name}_to_{target_name}_share"
+                        if not catalog.replication_config.dpm_backing_table_catalog:
+                            catalog.replication_config.dpm_backing_table_catalog = f"__replication_internal_dpm_{catalog.catalog_name}_from_{source_name}_shared"
+
+                    if catalog.replication_config.source_catalog is None:
+                        catalog.replication_config.source_catalog = (
+                            f"{catalog.catalog_name}_from_{source_name}_shared"
+                        )
 
             # Derive default reconciliation catalogs
             if catalog.reconciliation_config and catalog.reconciliation_config.enabled:
@@ -791,7 +809,7 @@ class ReplicationSystemConfig(BaseModel):
                     )
                 if catalog.reconciliation_config.source_catalog is None:
                     catalog.reconciliation_config.source_catalog = (
-                        f"{catalog.catalog_name}_from_{source_name}"
+                        f"{catalog.catalog_name}_from_{source_name}_shared"
                     )
 
         return self
@@ -898,10 +916,7 @@ class ReplicationSystemConfig(BaseModel):
                         object_types_provided.append("table_types")
                     if schema.volume_types and len(schema.volume_types) > 0:
                         object_types_provided.append("volume_types")
-                    if (
-                        schema.uc_object_types
-                        and len(schema.uc_object_types) > 0
-                    ):
+                    if schema.uc_object_types and len(schema.uc_object_types) > 0:
                         object_types_provided.append("uc_object_types")
 
                     if len(object_types_provided) > 1:
