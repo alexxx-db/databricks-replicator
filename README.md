@@ -21,13 +21,14 @@ This system provides incremental data and UC metadata replication capabilities b
   - Catalogs
   - Schemas
   - Volumes
+  - Tables
   - Views
   - Tags (catalog, schema, table, columns, views, volume)
   - Column Comments
 ### In Development
 - UC metadata
   - Permissions
-  - Materialized Views
+  - SQL-based Materialized Views
 
 ### Unsupported Object Types
 - Databricks Workspace Assets is not yet supported, but maybe considered in future roadmap
@@ -35,12 +36,15 @@ This system provides incremental data and UC metadata replication capabilities b
 
 ## Supported Operation Types
 ### Backup Operations
-- For ST, deep clones ST backing tables from source to backup catalogs.
-- For all table and volume types, add containing schemas to share.
+- (Optional if managed by Terraform) Create delta share recipient, create shares and add schemas to share
+- For legacy DLT streaming table, deep clones backing tables from source to backup catalogs and add backup schema to backup share
+- For Default Publishing Mode (DPM) streaming table, add backing table to dpm_backing_tables share directly
 - Not required for UC metadata replication
 
 ### Data Replication Operations
+- (Optional if managed by Terraform) Create shared catalog from shares
 - Deep clone tables across workspaces from shared catalog with schema enforcement
+- For DLT streaming table, it defaults to replicata from dmp_backing_table share and fallback to backup share
 - Incremental copy volume files across workspaces from shared catalog using autoloader
 
 ### Metadata Replication Operations
@@ -57,7 +61,7 @@ This system provides incremental data and UC metadata replication capabilities b
 Flexibility to let the tool setup Delta share infra automatically for you with default names, i.e. Recipient, Shares and Shared Catalogs. Alternatively, use existing Delta share infra
 
 ### Run Anywhere
-- Run on both Serverless (recommended) and non-Serverless (DBR 16.4+).\
+- Run on both Serverless (recommended) and non-Serverless (DBR 16.4+).
 - Run in source, target Databricks workspace, or outside Databricks
 - Run in cli, or deployed via DAB as workflow job
 
@@ -77,7 +81,7 @@ The system leverages native Deep Clone and Autoloader for incrementality and rep
 
 ### Streaming Table Handling
 The system automatically handles Streaming Tables complexities:
-- Export ST backing tables to share
+- Export legacy ST backing tables to share or add DPM ST backing tables to share
 - Constructs backing table path using pipeline ID
 - Deep clone ST backing tables rather than ST tables directly
 

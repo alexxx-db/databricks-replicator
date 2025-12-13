@@ -15,7 +15,7 @@ storage_credential_config:
     oneenv-adls: "arn:aws:iam::332745928618:role/ad-s3-multi-region-demo"
 
 cloud_url_mapping:
-  "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/aaron2"
+  "abfss://aaboode@oneenvadls.dfs.core.windows.net/": "s3://one-env-uc-external-location/aaron2/"
 
 audit_config:
   audit_table: "data_replication.audit.audit_logging"

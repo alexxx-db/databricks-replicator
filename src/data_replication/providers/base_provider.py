@@ -262,7 +262,7 @@ class BaseProvider(ABC):
                 UCObjectType.CATALOG in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                run_result = self._replicate_catalog()
+                run_result = self._uc_replicate_catalog()
                 results.extend(run_result)
                 catalog_run_result = []
                 if run_result:
@@ -279,7 +279,7 @@ class BaseProvider(ABC):
                 UCObjectType.CATALOG_TAG in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                run_result = self._replicate_catalog_tags()
+                run_result = self._uc_replicate_catalog_tags()
                 results.extend(run_result)
                 catalog_run_result = []
                 if run_result:
@@ -402,7 +402,7 @@ class BaseProvider(ABC):
                     UCObjectType.SCHEMA in self.catalog_config.uc_object_types
                     or UCObjectType.ALL in self.catalog_config.uc_object_types
                 ):
-                    run_result = self._replicate_schema(schema_config)
+                    run_result = self._uc_replicate_schema(schema_config)
                     results.extend(run_result)
                     schema_run_result = []
                     if run_result:
@@ -419,7 +419,7 @@ class BaseProvider(ABC):
                     UCObjectType.SCHEMA_TAG in self.catalog_config.uc_object_types
                     or UCObjectType.ALL in self.catalog_config.uc_object_types
                 ):
-                    run_result = self._replicate_schema_tags(schema_config)
+                    run_result = self._uc_replicate_schema_tags(schema_config)
                     results.extend(run_result)
                     schema_run_result = []
                     if run_result:
@@ -441,7 +441,7 @@ class BaseProvider(ABC):
                 results.extend(schema_results)
                 schema_table_list.extend(schema_tables)
                 schema_volume_list.extend(schema_volumes)
-                
+
                 if self.catalog_config.concurrency.process_schemas_in_serial:
                     if schema_results:
                         # Log summary info to regular logger
@@ -541,20 +541,31 @@ class BaseProvider(ABC):
             if (
                 self.catalog_config.uc_object_types
                 and (
-                    UCObjectType.TABLE_TAG in self.catalog_config.uc_object_types
-                    or UCObjectType.ALL in self.catalog_config.uc_object_types
-                    or UCObjectType.COLUMN_TAG in self.catalog_config.uc_object_types
-                    or UCObjectType.COLUMN_COMMENT
-                    or UCObjectType.VIEW in self.catalog_config.uc_object_types
+                    any(
+                        t in self.catalog_config.uc_object_types
+                        for t in [
+                            UCObjectType.TABLE_TAG,
+                            UCObjectType.ALL,
+                            UCObjectType.COLUMN_TAG,
+                            UCObjectType.COLUMN_COMMENT,
+                            UCObjectType.VIEW,
+                            UCObjectType.TABLE,
+                        ]
+                    )
                 )
             ) or self.catalog_config.table_types:
                 table_configs = self._get_tables(schema_config, schema_config.tables)
             if (
                 self.catalog_config.uc_object_types
                 and (
-                    UCObjectType.VOLUME_TAG in self.catalog_config.uc_object_types
-                    or UCObjectType.VOLUME in self.catalog_config.uc_object_types
-                    or UCObjectType.ALL in self.catalog_config.uc_object_types
+                    any(
+                        t in self.catalog_config.uc_object_types
+                        for t in [
+                            UCObjectType.VOLUME_TAG,
+                            UCObjectType.VOLUME,
+                            UCObjectType.ALL,
+                        ]
+                    )
                 )
             ) or self.catalog_config.volume_types:
                 volume_configs = self._get_volumes(schema_config, schema_config.volumes)
@@ -1211,6 +1222,8 @@ class BaseProvider(ABC):
                 table_types_set.update(
                     ["managed", "external", "streaming_table", "view"]
                 )
+            if UCObjectType.TABLE in schema_config.uc_object_types:
+                table_types_set.update(["managed", "external"])
             if UCObjectType.VIEW in schema_config.uc_object_types:
                 table_types_set.update(["view"])
             if table_types_set:
@@ -1563,7 +1576,7 @@ class BaseProvider(ABC):
             max_attempts=max_attempts,
         )
 
-    def _replicate_catalog_tags(
+    def _uc_replicate_catalog_tags(
         self,
     ) -> list[RunResult]:
         """
@@ -1625,7 +1638,7 @@ class BaseProvider(ABC):
         run_results.append(run_result)
         return run_results
 
-    def _replicate_schema_tags(
+    def _uc_replicate_schema_tags(
         self,
         schema_config: SchemaConfig,
     ) -> list[RunResult]:
@@ -1697,7 +1710,7 @@ class BaseProvider(ABC):
         run_results.append(run_result)
         return run_results
 
-    def _replicate_catalog(self) -> List[RunResult]:
+    def _uc_replicate_catalog(self) -> List[RunResult]:
         """
         Replicate catalog from source to target using workspace client.
         If storage location exists, uses external_location mapping to determine target path.
@@ -1895,7 +1908,7 @@ class BaseProvider(ABC):
 
         return run_results
 
-    def _replicate_schema(self, schema_config: SchemaConfig) -> List[RunResult]:
+    def _uc_replicate_schema(self, schema_config: SchemaConfig) -> List[RunResult]:
         """
         Replicate schema from source to target using workspace client.
 

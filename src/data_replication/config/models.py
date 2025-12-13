@@ -78,6 +78,7 @@ class UCObjectType(str, Enum):
     SCHEMA = "schema"
     SCHEMA_TAG = "schema_tag"
     VIEW = "view"
+    TABLE = "table"
     VOLUME = "volume"
     VOLUME_TAG = "volume_tag"
     TABLE_TAG = "table_tag"
@@ -207,6 +208,8 @@ class ReplicationConfig(BaseModel):
     intermediate_catalog: Optional[str] = None
     intermediate_catalog_location: Optional[str] = None
     enforce_schema: Optional[bool] = True
+    create_or_replace_table: Optional[bool] = False
+    create_or_replace_view: Optional[bool] = True
     overwrite_tags: Optional[bool] = True
     overwrite_comments: Optional[bool] = True
     replicate_as_managed: Optional[bool] = False
@@ -440,6 +443,21 @@ class EnvironmentConfig(BaseModel):
     retry: Optional[RetryConfig] = None
     logging: Optional[LoggingConfig] = None
 
+    @field_validator("cloud_url_mapping")
+    @classmethod
+    def validate_cloud_url_mappings(cls, v):
+        """Validate that all keys and values in cloud_url_mapping end with '/'."""
+        if v is None:
+            return v
+        
+        for key, value in v.items():
+            if not key.endswith('/'):
+                raise ValueError(f"Cloud URL mapping key must end with '/': {key}")
+            if not value.endswith('/'):
+                raise ValueError(f"Cloud URL mapping value must end with '/': {value}")
+        
+        return v
+
 
 class EnvironmentsConfig(BaseModel):
     """Configuration model for environments.yaml file."""
@@ -541,6 +559,21 @@ class ReplicationSystemConfig(BaseModel):
                 "are being replicated"
             )
         return self
+
+    @field_validator("cloud_url_mapping")
+    @classmethod
+    def validate_cloud_url_mappings(cls, v):
+        """Validate that all keys and values in cloud_url_mapping end with '/'."""
+        if v is None:
+            return v
+        
+        for key, value in v.items():
+            if not key.endswith('/'):
+                raise ValueError(f"Cloud URL mapping key must end with '/': {key}")
+            if not value.endswith('/'):
+                raise ValueError(f"Cloud URL mapping value must end with '/': {value}")
+        
+        return v
 
     @model_validator(mode="after")
     def merge_configs(self):

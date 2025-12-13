@@ -387,6 +387,34 @@ def map_cloud_url(source_storage_root: str, cloud_url_mapping: dict) -> Optional
 
     return None
 
+def replace_cloud_url(
+    string_with_url: str, cloud_url_mapping: dict, first_only: bool = True
+) -> str:
+    """
+    Replace source string with target string using cloud URL mapping.
+
+    Args:
+        string_with_url: String containing the source url
+        cloud_url_mapping: Dictionary mapping source to target cloud URLs
+
+    Returns:
+        Replaced string with target url
+    """
+    if not string_with_url or not cloud_url_mapping:
+        return string_with_url
+
+    # Find matching source external location
+    for src_url, tgt_url in cloud_url_mapping.items():
+        if src_url.lower() in string_with_url.lower():
+            # Replace source location with target location
+            string_with_url = string_with_url.replace(
+                src_url, tgt_url
+            )
+            if first_only:
+                return string_with_url
+
+    return string_with_url
+
 
 def map_user(source_user: str, user_mapping: dict) -> Optional[str]:
     """

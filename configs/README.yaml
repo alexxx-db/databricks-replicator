@@ -50,6 +50,7 @@ uc_object_types: [
     "schema",
     "schema_tag",
     "view",
+    "table",
     "volume",
     "volume_tag",
     "table_tag",
@@ -129,10 +130,15 @@ replication_config:
   # Optional: whether to replicate predictive optimization setting during UC catalog, schema and table replication.
   # default is false to disable PO at target to enable consistent incremental deep clone. Setting to true will replicate PO settings from source to target.
   replicate_enable_predictive_optimization: false
+  # Optional: whether to create or replace table during UC table replication. default is false to use create table if not exists.
+  create_or_replace_table: false
+  # Optional: whether to create or replace view during UC view replication. default is false to use create view if not exists.
+  create_or_replace_view: true
   # Optional: whether to overwrite tags during replication. default is true.
   overwrite_tags: true
   # Optional: whether to overwrite comments during replication. default is true.
   overwrite_comments: true
+
   # uc metadata specific configurations end here: ------------------------
 
   # Streaming table specific configurations start here: ------------------------
