@@ -1,0 +1,83 @@
+## Configuration Inheritance
+
+Configurations can be defined at different level within the yaml file, child object will inherit all configs from its parent but can override by defining different config value at child level. Dictionary type config will be merged from child to parent recursively, but List type config will be completed replaced.
+
+The hierararchical inheritance follows the following sequence: Replication Group -> Catalog -> Schema -> Table
+
+
+```yaml
+# replication level 
+table_types: ["managed","external"]
+reconciliation_config:
+  enabled: true
+  missing_data_check: false.  # by default, apply to all catalogs
+
+target_catalogs:
+  # catalog level  
+  - catalog_name: "catalog_1"
+    reconciliation_config:
+      missing_data_check: true # override at catalog level, true for to all schemas
+    target_schemas:
+      # schema_level  
+      - schema_name: "bonze_1"    
+        reconciliation_config:
+          missing_data_check: false   # override at schema level, false for to all tables
+      # schema_level  
+      - schema_name: "silver_1"   # no override at schema level, true for to all tables
+        tables:
+          # table level
+          - table_name: "table_1"
+            reconciliation_config:
+              missing_data_check: false     # override at table level, false for table_1
+          # table level
+          - table_name: "table_2"         # no override at schema level, true for table_2   
+  - catalog_name: "catalog_2"        # missing_data_check no override at catalog level, false for all tables 
+    table_types: ["streaming_table"]   # table_types override at catalog level, streaming_table for all tables (replace table_type list at replication group level)
+```
+
+#### Config Availability Levels
+Table below shows which configs are available to be defined at each hierarchy level.
+| Config Group Name | Replication Group Level | Catalog Level | Schema Level | Table Level |
+|-------------|-----------|-------------|-------------|-------------|
+| audit_config| YES |  |
+| logging | YES
+| storage_credential_config | YES |  |
+| cloud_url_mapping | YES |  
+| external_location_config | YES | 
+| target_catalogs | YES  
+| uc_object_types | YES | YES |YES |
+| table_types | YES | YES |YES |
+| volume_types | YES | YES |YES |
+| backup_config | YES | YES |YES |
+| replication_config| YES | YES |YES |YES |
+| reconciliation_config| YES | YES |YES |YES |
+| concurrency | YES | YES |YES |YES |
+| retry | YES | YES |YES |YES |
+
+
+## Replication Group Configuration Override
+Replication group level configs can be overriden by <a href=../configs/environments.yaml>environments.yaml</a> and CLI arguments (see blow). CLI takes precedence over environments.yaml, which takes precedence over replication group.
+
+
+### Environments.yaml Override
+All replication group level configs can be defined in <a href=../configs/environments.yaml>environments.yaml</a>, which is used defined connections and env specific configs. environments.yaml takes precedence over replication group level. Similar to config inheritance, dictionary type config will be merged from environments.yaml to replication group recursively, but List type config will be completed replaced.
+
+### CLI Override
+Some replication group level configs can be overriden/provided by CLI args.
+| Config Group Name | CLI argument Name 
+|-------------|-----------|
+| logging.level | --logging-level 
+| target_catalogs | --target-catalogs, --target-schemas,--target-tables,--target-volumes,--schema-table-filter-expression 
+| uc_object_types |  --uc-object-types
+| table_types | --table-types
+| volume_types | --volume-types
+| replication_config.max_concurrent_copies | --volume-max-concurrent-copies
+| replication_config.delete_and_reload | --volume-delete-and-reload
+| replication_config.delete_checkpoint |  --volume-delete-and-reload
+| replication_config.folder_path |  --volume-folder-path
+| replication_config.autoloader_options | --volume-autoloader-options
+| replication_config.streaming_timeout_seconds | --volume-streaming-timeout-secs
+
+**Note:** CLI arg only overrides at replication group level, catalog/schema/table level config still take precedence
+
+## Substitutes
