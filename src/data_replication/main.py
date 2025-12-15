@@ -386,7 +386,7 @@ def main():
                     "Reconciliation disabled or No catalogs configured for reconciliation"
                 )
 
-        logger.info(f"All Operations Ends {'-' * 60}")
+        logger.info(f"All Operations Ends. Check log with run_id {run_id} in {config.audit_config.audit_table} at {logging_workspace_url} {'-' * 30}")
 
     except ConfigurationError as e:
         logger.error(f"Configuration error: {e}")

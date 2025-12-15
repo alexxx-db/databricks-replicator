@@ -68,9 +68,10 @@ table_types: ["all", "managed", "streaming_table", "external"]
 # supported volume types: all, managed, external.
 volume_types: ["all", "managed", "external"]
 
-# Mandatory: At least one of backup_config, replication_config, reconciliation_config must be provided at catalog level or replication group level (lower priority).
+# Mandatory: At least one of backup_config, replication_config, reconciliation_config below must be provided at catalog level or replication group level (lower priority).
 
 # Optional: replication group level backup configuration
+# Required if source delta share is to be created for replication
 backup_config:
   # Mandatory at replication group level or catalog level: whether to backup catalog.
   enabled: true
@@ -80,7 +81,7 @@ backup_config:
   create_recipient: false
   # Optional: recipient name. default to <target_databricks_connect_config.name>_recipient
   recipient_name: "aws_recipient"
-  # Optional: whether to create share on source.default is false.
+  # Optional: whether to create share from source_catalog at source. default is false.
   create_share: false
   # Optional: whether to add the schema to share. default is false.
   add_to_share: false
@@ -88,7 +89,7 @@ backup_config:
   share_name: "catalog_example_to_aws_share"
 
   # Streaming table specific configurations start here: ------------------------
-  # Optional: whether to create backup catalog on source. default is false.
+  # Optional: whether to create backup catalog for legacy dlt streaming tables at source. default is false.
   create_backup_catalog: false
   # Optional: backup catalog name. must not be set for non-streaming table replication.
   # default to __replication_internal_<catalog_name>_to_<target_databricks_connect_config.name>
@@ -97,11 +98,11 @@ backup_config:
   backup_catalog_location: null
   # Optional: prefix for backup schema names. default is None.
   backup_schema_prefix: null
-  # Optional: whether to create backup share on source. default is false.
+  # Optional: whether to create backup share at source. default is false.
   create_backup_share: false
   # Optional: share name for streaming table backing table. default to <backup_catalog>_share
   backup_share_name: "__replication_internal_catalog_example_to_aws_share"
-  # Optional: whether to create dpm backing table share on source. default is false.
+  # Optional: whether to create dpm backing table share at source. default is false.
   create_dpm_backing_table_share: false
   # Optional: backing table share name for dpm dlt backing table. default to __replication_internal_dpm_<catalog_name>_to_<target_databricks_connect_config.name>_share
   dpm_backing_table_share_name: "__replication_internal_dpm_catalog_example_to_aws_share"
@@ -111,26 +112,6 @@ backup_config:
 replication_config:
   # Mandatory at replication group level or catalog level: whether to replicate catalog.
   enabled: true
-  # Optional: whether to replicate the catalog if it does not exist on target.default is false.
-  create_target_catalog: false
-  # Optional: target catalog location. default is None.
-  target_catalog_location: null
-  # Optional: whether to create the shared catalog. default is false.
-  create_shared_catalog: false
-  # Optional: share provider name. default is None.
-  provider_name: None
-  # Optional: share name of source catalog. default to <catalog_name>_to_<target_databricks_connect_config.name>_share
-  share_name: "catalog_example_to_aws_share"
-  # Optional: catalog created from source share. default to <catalog_name>_from_<source_databricks_connect_config.name>_shared
-  source_catalog: "catalog_example_from_azure_shared"
-  # Optional: whether to create intermediate catalog for replication. default is false.
-  create_intermediate_catalog: false
-  # Optional: intermediate catalog for replication. default is None.
-  intermediate_catalog: null
-  # Optional: intermediate catalog location. default is None.
-  intermediate_catalog_location: null
-  # Optional: whether to enforce schema during replication. default is true.
-  enforce_schema: true
 
   # uc metadata specific configurations start here: ------------------------
   # Optional: whether to replicate predictive optimization setting during UC catalog, schema and table replication.
@@ -145,6 +126,28 @@ replication_config:
   # Optional: whether to overwrite comments during replication. default is true.
   overwrite_comments: true
   # uc metadata specific configurations end here: ------------------------
+  
+  # Data Replication specific configurations start here: ------------------------
+  # Optional: whether to replicate the catalog if it does not exist on target.default is false.
+  create_target_catalog: false
+  # Optional: target catalog location. default is None.
+  target_catalog_location: null
+  # Optional: whether to create the shared catalog. default is false.
+  create_shared_catalog: false
+  # Optional: share provider name. default is None.
+  provider_name: null
+  # Optional: share name of source catalog. default to <catalog_name>_to_<target_databricks_connect_config.name>_share
+  share_name: "catalog_example_to_aws_share"
+  # Optional: catalog created from source share. default to <catalog_name>_from_<source_databricks_connect_config.name>_shared
+  source_catalog: "catalog_example_from_azure_shared"
+  # Optional: whether to create intermediate catalog for replication. default is false.
+  create_intermediate_catalog: false
+  # Optional: intermediate catalog for replication. default is None.
+  intermediate_catalog: null
+  # Optional: intermediate catalog location. default is None.
+  intermediate_catalog_location: null
+  # Optional: whether to enforce schema during replication. default is true.
+  enforce_schema: true
 
   # Streaming table specific configurations start here: ------------------------
   # Optional: whether to create backup shared catalog on target. default is false.
@@ -194,6 +197,7 @@ replication_config:
     # Optional: detailed file ingestion logging outputs schema name. default to detail_file_ingestion_logging.
     file_ingestion_logging_table: "detail_file_ingestion_logging"
   # Volume file specific configurations end here: ------------------------
+  # Data Replication specific configurations end here: ------------------------
 
 # Optional: replication group level reconciliation configuration
 reconciliation_config:

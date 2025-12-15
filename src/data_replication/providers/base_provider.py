@@ -451,11 +451,16 @@ class BaseProvider(ABC):
                             for r in schema_results
                             if schema_results and r.status == "success"
                         )
+                        skipped = sum(
+                            1
+                            for r in schema_results
+                            if schema_results and r.status == "skipped"
+                        )                        
                         total = len(schema_results) if schema_results else 0
 
                         self.logger.info(
                             f"Completed {self.get_operation_name()} for schema {self.catalog_name}.{schema_config.schema_name}: "
-                            f"{successful}/{total} operations successful"
+                            f"{successful}/{total} operations successful, {skipped}/{total} operations skipped"
                         )
 
             if not self.catalog_config.concurrency.process_schemas_in_serial:
@@ -472,18 +477,22 @@ class BaseProvider(ABC):
                             for r in catalog_run_result
                             if catalog_run_result and r.status == "success"
                         )
+                        skipped = sum(
+                            1
+                            for r in catalog_run_result
+                            if catalog_run_result and r.status == "skipped"
+                        )
                         total = len(catalog_run_result) if catalog_run_result else 0
 
                         self.logger.info(
                             f"Completed table {self.get_operation_name()} for catalog {self.catalog_name}: "
-                            f"{successful}/{total} operations successful"
+                            f"{successful}/{total} operations successful, {skipped}/{total} operations skipped"
                         )
 
                 if schema_volume_list:
                     catalog_run_result = self._process_schema_volumes(
                         schema_volume_list, self.catalog_name, start_time
                     )
-                    catalog_run_result = []
                     if catalog_run_result:
                         results.extend(catalog_run_result)
                         # Log summary info to regular logger
@@ -674,9 +683,15 @@ class BaseProvider(ABC):
                     results.extend(result)
                     # Check if any result in the list failed
                     for single_result in result:
-                        if single_result.status != "success":
+                        if single_result.status == "failed":
                             self.logger.error(
-                                f"Failed to process table "
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type}"
+                                f"{catalog_name}.{schema_name}.{table_name}: "
+                                f"{single_result.error_message}"
+                            )
+                        if single_result.status == "skipped":
+                            self.logger.warning(
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type}"
                                 f"{catalog_name}.{schema_name}.{table_name}: "
                                 f"{single_result.error_message}"
                             )
@@ -819,9 +834,15 @@ class BaseProvider(ABC):
                     results.extend(result)
                     # Check if any result in the list failed
                     for single_result in result:
-                        if single_result.status != "success":
+                        if single_result.status == "failed":
                             self.logger.error(
-                                f"Failed to process table "
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type} "
+                                f"{catalog_name}.{schema_name}.{table_name}: "
+                                f"{single_result.error_message}"
+                            )
+                        if single_result.status == "skipped":
+                            self.logger.warning(
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type} "
                                 f"{catalog_name}.{schema_name}.{table_name}: "
                                 f"{single_result.error_message}"
                             )
@@ -893,9 +914,9 @@ class BaseProvider(ABC):
                     results.extend(result)
                     # Check if any result in the list failed
                     for single_result in result:
-                        if single_result.status != "success":
+                        if single_result.status == "failed":
                             self.logger.error(
-                                f"Failed to process volume "
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type} "
                                 f"{catalog_name}.{schema_name}.{volume_name}: "
                                 f"{single_result.error_message}"
                             )
@@ -1308,6 +1329,7 @@ class BaseProvider(ABC):
         if schema_config.uc_object_types and (
             UCObjectType.VOLUME in schema_config.uc_object_types
             or UCObjectType.VOLUME_TAG in schema_config.uc_object_types
+            or UCObjectType.ALL in schema_config.uc_object_types
         ):
             volume_types.extend(["managed", "external"])
 
@@ -1317,6 +1339,10 @@ class BaseProvider(ABC):
             volume_names,
             volume_types,
         )
+        if len(filtered_volume_names) != len(volume_names):
+            self.logger.info(
+                f"Exclude {len(volume_names) - len(filtered_volume_names)} volume types unmatched volumes from {len(volume_names)} volumes"
+            )        
         # Then filter by volume types
         return [
             volume for volume in volumes if volume.volume_name in filtered_volume_names

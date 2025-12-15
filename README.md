@@ -156,8 +156,8 @@ data-replicator configs/cross_metastore/uc_metadata_defaults.yaml --uc-object-ty
 # DLT streaming tables must already exist in target before replicate
 data-replicator configs/cross_metastore/all_tables_defaults.yaml --target-catalogs catalog1,catalog2,catalog3
 
-# Replicate volume files for specific volumes
-data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs aaron_replication --target-schemas bronze_1,silver_1 --target-volumes raw
+# Replicate volume files for specific catalogs
+data-replicator configs/cross_metastore/volume_defaults.yaml --target-catalogs catalog1,catalog2,catalog3
 ```
 The solution can be flexibly configured to replicate all or selected objects and data. Some objects such as storage credentials might be created centrally with Terraform instead
 ```bash

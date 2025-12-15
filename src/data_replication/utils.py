@@ -375,7 +375,9 @@ def map_cloud_url(source_storage_root: str, cloud_url_mapping: dict) -> Optional
 
     # Find matching source external location
     for src_location, tgt_location in cloud_url_mapping.items():
-        if source_storage_root.startswith(src_location):
+        if source_storage_root.lower().startswith(src_location.lower()) or source_storage_root.lower().startswith(
+            src_location.rstrip("/").lower()
+        ):
             # Calculate relative path and construct target location
             relative_path = source_storage_root[len(src_location) :].lstrip("/")
             target_storage_root = (
@@ -405,10 +407,10 @@ def replace_cloud_url(
 
     # Find matching source external location
     for src_url, tgt_url in cloud_url_mapping.items():
-        if src_url.lower() in string_with_url.lower():
+        if src_url.rstrip('/').lower() in string_with_url.lower():
             # Replace source location with target location
             string_with_url = string_with_url.replace(
-                src_url, tgt_url
+                src_url.rstrip('/'), tgt_url.rstrip('/')
             )
             if first_only:
                 return string_with_url

@@ -81,3 +81,37 @@ Some replication group level configs can be overriden/provided by CLI args.
 **Note:** CLI arg only overrides at replication group level, catalog/schema/table level config still take precedence
 
 ## Substitutes
+The following substitutes are available in yaml config. Scope defines where the substitution will take place. e.g. {{schema_name}} will only be substitute within the schema being processed, i.e. scope=Schema, so any schema level or table level config can use it
+| Substitute Name | Substituted By | Scope
+|-------------|-----------|-----------|
+| {{source_name}} | source_databricks_connect_config.name | Replication Group
+| {{target_name}} | target_databricks_connect_config.name | Replication Group
+| {{catalog_name}}|  target catalog name being processed | Catalog
+| {{schema_name}} |  target schema name being processed | Schema
+| {{table_name}} | target table name being processed | Table
+
+Below is an example:
+```yaml
+table_types: ["external", "managed"]
+backup_config:
+  enabled: true
+  share_name: "{{catalog_name}}_share"
+replication_config:
+  enabled: true
+  source_catalog: "{{catalog_name}}_share_{{source_name}}"
+reconciliation_config:
+  enabled: true
+  source_catalog: "{{catalog_name}}_share_{{source_name}}"
+
+target_catalogs:
+  - catalog_name: "aaron_replication"
+    target_schemas:
+      - schema_name: "bronze_1"
+        tables:
+          - table_name: "{{schema_name}}_managed_table_1"
+          - table_name: "{{schema_name}}_managed_table_2"
+          - table_name: "external_table_1"
+            replication_config:
+          - table_name: "file_6"
+      - schema_name: "{{catalog_name}}_silver_1"
+```

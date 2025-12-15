@@ -1257,7 +1257,7 @@ class ReplicationProvider(BaseProvider):
             table_type = self.source_dbops.get_table_type(source_table)
             if table_type.upper() not in ["VIEW", "MANAGED", "EXTERNAL"]:
                 self.logger.info(
-                    f"Unsupported table type {table_type} are skipped for {source_table} -> {target_table}",
+                    f"{object_type} is not supported for {table_type} and are skipped for {source_table} -> {target_table}.Declare {object_type} in DLT pipeline instead",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
                 end_time = datetime.now(timezone.utc)
@@ -1269,16 +1269,16 @@ class ReplicationProvider(BaseProvider):
                         schema_name=schema_name,
                         object_name=table_name,
                         object_type=object_type,
-                        status="success",
+                        status="skipped",
                         start_time=start_time.isoformat(),
                         end_time=end_time.isoformat(),
                         duration_seconds=duration,
+                        error_message=f"{object_type} is not supported for {table_type}",
                         details={
                             "source_object": source_table,
                             "target_object": target_table,
                             "overwrite_comments": replication_config.overwrite_comments,
                             "table_type": table_type,
-                            "skipped": True,
                         },
                         attempt_number=attempt,
                         max_attempts=max_attempts,
@@ -1308,7 +1308,6 @@ class ReplicationProvider(BaseProvider):
                             "target_object": target_table,
                             "overwrite_comments": replication_config.overwrite_comments,
                             "table_type": table_type,
-                            "skipped": True,
                         },
                         attempt_number=attempt,
                         max_attempts=max_attempts,
@@ -1351,7 +1350,6 @@ class ReplicationProvider(BaseProvider):
                                 "target_object": target_table,
                                 "overwrite_comments": replication_config.overwrite_comments,
                                 "table_type": table_type,
-                                "skipped": True,
                             },
                             attempt_number=attempt,
                             max_attempts=max_attempts,
@@ -1408,7 +1406,7 @@ class ReplicationProvider(BaseProvider):
                     return run_results
             else:
                 self.logger.warning(
-                    f"Source or target table does not exist for comment replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
+                    f"Source or target table does not exist for {object_type} replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
                 end_time = datetime.now(timezone.utc)
@@ -1528,7 +1526,7 @@ class ReplicationProvider(BaseProvider):
             run_results.append(run_result)
         else:
             self.logger.warning(
-                f"Source or target table does not exist for tag replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
+                f"Source or target table does not exist for {object_type} replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
                 extra={"run_id": self.run_id, "operation": "replication"},
             )
             end_time = datetime.now(timezone.utc)
@@ -1587,7 +1585,7 @@ class ReplicationProvider(BaseProvider):
                 source_table
             ) or not self.target_spark.catalog.tableExists(target_table):
                 self.logger.warning(
-                    f"Source or target table does not exist for column tag replication: {source_table} -> {target_table}",
+                    f"Source or target table does not exist for {object_type} replication: {source_table} -> {target_table}",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
                 end_time = datetime.now(timezone.utc)
@@ -2144,7 +2142,7 @@ class ReplicationProvider(BaseProvider):
                 source_table
             ) or not self.target_spark.catalog.tableExists(target_table):
                 self.logger.warning(
-                    f"Source or target table does not exist for comment replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
+                    f"Source or target table does not exist for {object_type} replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
                 end_time = datetime.now(timezone.utc)
@@ -2211,7 +2209,6 @@ class ReplicationProvider(BaseProvider):
                             "source_object": source_table,
                             "target_object": target_table,
                             "overwrite_comments": replication_config.overwrite_comments,
-                            "skipped": True,
                         },
                         attempt_number=attempt,
                         max_attempts=max_attempts,
@@ -2266,9 +2263,32 @@ class ReplicationProvider(BaseProvider):
                     )
                 else:
                     self.logger.warning(
-                        f"Unsupported table type for column comment replication: {table_type} for table {source_table}",
+                        f"{object_type} is not supported for {table_type} and are skipped for {source_table} -> {target_table}.Declare {object_type} in DLT pipeline instead",
                         extra={"run_id": self.run_id, "operation": "replication"},
                     )
+                    end_time = datetime.now(timezone.utc)
+                    duration = (end_time - start_time).total_seconds()
+                    return [
+                        RunResult(
+                            operation_type="uc_replication",
+                            catalog_name=target_catalog,
+                            schema_name=schema_name,
+                            object_name=table_name,
+                            object_type=object_type,
+                            status="skipped",
+                            start_time=start_time.isoformat(),
+                            end_time=end_time.isoformat(),
+                            duration_seconds=duration,
+                            error_message=f"{object_type} is not supported for {table_type}",
+                            details={
+                                "source_object": source_table,
+                                "target_object": target_table,
+                                "overwrite_comments": replication_config.overwrite_comments,
+                            },
+                            attempt_number=attempt,
+                            max_attempts=max_attempts,
+                        )
+                    ]
 
             end_time = datetime.now(timezone.utc)
             duration = (end_time - start_time).total_seconds()
@@ -2418,10 +2438,32 @@ class ReplicationProvider(BaseProvider):
                 )
             else:
                 self.logger.warning(
-                    f"Skip unsupported table type for UC DDL replication: {source_table_type} for {source_table}",
+                    f"Create DDL is not supported for {source_table_type} and are skipped for {source_table} -> {target_table}.",
                     extra={"run_id": self.run_id, "operation": "uc_replication"},
                 )
-                return []
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                return [
+                    RunResult(
+                        operation_type="uc_replication",
+                        catalog_name=target_catalog,
+                        schema_name=schema_name,
+                        object_name=table_name,
+                        object_type=object_type,
+                        status="skipped",
+                        start_time=start_time.isoformat(),
+                        end_time=end_time.isoformat(),
+                        duration_seconds=duration,
+                        error_message=f"Create DDL is not supported for {source_table_type}",
+                        details={
+                            "target_table": target_table,
+                            "source_table": source_table,
+                            "table_type": source_table_type.lower(),
+                        },
+                        attempt_number=1,
+                        max_attempts=max_attempts,
+                    )
+                ]
 
             end_time = datetime.now(timezone.utc)
             duration = (end_time - start_time).total_seconds()

@@ -188,7 +188,7 @@ class BackupProvider(BaseProvider):
             self.logger.info(
                 f"""Skipping backup for schema {schema_config.schema_name} as only streaming tables requires backup."""
             )
-            return results
+            return results, [], []
 
         # Set table types to only streaming tables for backup
         schema_config.table_types = [TableType.STREAMING_TABLE]
@@ -366,7 +366,6 @@ class BackupProvider(BaseProvider):
                                     "step2_query": step2_query,
                                     "backup_schema_prefix": backup_config.backup_schema_prefix,
                                     "dlt_flag": dlt_flag,
-                                    "skipped": True,
                                 },
                                 attempt_number=attempt,
                                 max_attempts=max_attempts,
@@ -397,10 +396,11 @@ class BackupProvider(BaseProvider):
                         schema_name=schema_name,
                         object_name=table_name,
                         object_type="table",
-                        status="success",
+                        status="skipped",
                         start_time=start_time.isoformat(),
                         end_time=end_time.isoformat(),
                         duration_seconds=duration,
+                        error_message=f"Skipping backup for non-DLT table: {source_table}",
                         details={
                             "backup_table": backup_table,
                             "backup_schema_name": backup_schema_name,
@@ -410,7 +410,6 @@ class BackupProvider(BaseProvider):
                             "step2_query": step2_query,
                             "backup_schema_prefix": backup_config.backup_schema_prefix,
                             "dlt_flag": dlt_flag,
-                            "skipped": True,
                         },
                         attempt_number=attempt,
                         max_attempts=max_attempts,
