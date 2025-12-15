@@ -5,7 +5,7 @@ This module provides utilities for interacting with Databricks catalogs,
 schemas, and tables.
 """
 
-from typing import Iterator, List, Tuple, Optional
+from typing import Iterator, List, Optional
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -23,9 +23,6 @@ from pyspark.sql.functions import col
 from data_replication.audit.logger import DataReplicationLogger
 from data_replication.config.models import (
     RetryConfig,
-    TableType,
-    UCObjectType,
-    VolumeType,
 )
 from data_replication.exceptions import TableNotFoundError
 from data_replication.utils import (
@@ -96,6 +93,32 @@ class DatabricksOperations:
                     f"after {execution_time:.3f}s: {str(e)}"
                 )
             raise
+
+    def execute_query(self, sql_query: str, operation_context: str = ""):
+        """
+        Execute SQL query.
+
+        Args:
+            sql_query: The SQL query to execute
+            operation_context: Context description for the operation
+
+        Returns:
+            Result of the SQL execution
+        """
+        return self._execute_sql(sql_query, operation_context)
+
+    def get_current_user(self) -> str:
+        """
+        Get the current user executing the Spark session.
+
+        Returns:
+            Current user as a string
+        """
+        try:
+            current_user = self.spark.sql("SELECT current_user()").collect()[0][0]
+            return current_user
+        except Exception as e:
+            raise Exception(f"Failed to get current user: {str(e)}") from e
 
     def get_metastore_id(self) -> str:
         """
@@ -537,7 +560,7 @@ class DatabricksOperations:
         except Exception as e:
             raise Exception(f"""Failed to drop table: {str(e)}""") from e
 
-    def get_pipeline_id(self, table_name: str) -> str:
+    def get_pipeline_id(self, table_name: str):
         """
         get pipleline id from table properties
 
@@ -545,13 +568,18 @@ class DatabricksOperations:
             table_name: table full name (catalog.schema.table)
         Returns:
             pipeline id if exists else None
+            parent table id if exists else None
         """
 
         table_details = self.describe_table_detail(table_name)
 
-        return table_details["properties"].get("pipelines.pipelineId", None)
+        return table_details["properties"].get(
+            "pipelines.pipelineId", None
+        ), table_details["properties"].get(
+            "spark.sql.internal.pipelines.parentTableId", None
+        )
 
-    def get_table_details(self, table_name: str) -> Tuple[str, bool]:
+    def get_table_details(self, table_name: str) -> dict:
         """
         Get actual table name, whether it's a DLT table, and pipeline ID.
         Args:
@@ -563,28 +591,50 @@ class DatabricksOperations:
             - pipeline_id: Pipeline ID if applicable, else None
         """
         if self.spark.catalog.tableExists(table_name):
-            pipeline_id = self.get_pipeline_id(table_name)
+            pipeline_id, parent_table_id = self.get_pipeline_id(table_name)
             if pipeline_id:
+                dlt_type = None
                 # Handle streaming table or materialized view
-                actual_table_name = self._get_internal_table_name(
+                actual_table_name, dlt_type = self._get_internal_table_name(
                     table_name, pipeline_id
                 )
                 return {
                     "table_name": actual_table_name.lower(),
                     "is_dlt": True,
+                    "dlt_type": dlt_type,
                     "pipeline_id": pipeline_id,
+                    "parent_table_id": parent_table_id,
                 }
 
             # If not a DLT table, just return the original table name and "delta"
             return {
                 "table_name": table_name.lower(),
                 "is_dlt": False,
+                "dlt_type": None,
                 "pipeline_id": None,
+                "parent_table_id": None,
             }
         else:
             raise TableNotFoundError(f"Table {table_name} does not exist")
 
-    def _get_internal_table_name(self, table_name: str, pipeline_id: str) -> str:
+    def _if_internal_table_exists(self, table_name: str) -> bool:
+        """
+        Check if internal table exists.
+
+        Args:
+            table_name: Full internal table name (catalog.schema.table)
+            dlt_type: Type of DLT table ("dpm" or "legacy")
+        Returns:
+            True if internal table exists, False otherwise
+        """
+        try:
+            return self.spark.catalog.tableExists(table_name)
+        except Exception as e:
+            if "UnauthorizedAccessException".upper() in str(e).upper():
+                return True
+            raise e
+
+    def _get_internal_table_name(self, table_name: str, pipeline_id: str):
         """
         Get the internal table name for streaming tables or materialized views.
 
@@ -611,35 +661,35 @@ class DatabricksOperations:
         # Get catalog from original table name
         catalog_name = table_name.split(".")[0].replace("`", "")
 
-        # Check possible locations for the internal table 1
-        full_internal_table_name = (
-            f"`__databricks_internal`.`{internal_schema_name}`.`{table_name_only}`"
-        )
-        if self.spark.catalog.tableExists(full_internal_table_name):
-            return full_internal_table_name
-
-        # Check possible locations for the internal table 2
-        full_internal_table_name = (
-            f"`__databricks_internal`.`{internal_schema_name}`.`{internal_table_name}`"
-        )
-        if self.spark.catalog.tableExists(full_internal_table_name):
-            return full_internal_table_name
-
-        # Check possible locations for the internal table 3
+        # Check possible locations for the internal table 1 - dpm dlt backing table location
         schema_name = table_name.split(".")[1].replace("`", "")
         full_internal_table_name = (
             f"`{catalog_name}`.`{schema_name}`.`{internal_table_name}`"
         )
-        if self.spark.catalog.tableExists(full_internal_table_name):
-            return full_internal_table_name
+        if self._if_internal_table_exists(full_internal_table_name):
+            return full_internal_table_name, "dpm"
 
-        # Check possible locations for the internal table 4
+        # Check possible locations for the internal table 2 - legacy dlt backing table location 1
+        full_internal_table_name = (
+            f"`__databricks_internal`.`{internal_schema_name}`.`{table_name_only}`"
+        )
+        if self._if_internal_table_exists(full_internal_table_name):
+            return full_internal_table_name, "legacy"
+
+        # Check possible locations for the internal table 3 - legacy dlt backing table location 2
+        full_internal_table_name = (
+            f"`__databricks_internal`.`{internal_schema_name}`.`{internal_table_name}`"
+        )
+        if self._if_internal_table_exists(full_internal_table_name):
+            return full_internal_table_name, "legacy"
+
+        # Check possible locations for the internal table 4 - legacy dlt backing table location 3
         internal_table_name = f"__materialization_mat_{table_name_only}_1"
         full_internal_table_name = (
             f"`__databricks_internal`.`{internal_schema_name}`.`{internal_table_name}`"
         )
-        if self.spark.catalog.tableExists(full_internal_table_name):
-            return full_internal_table_name
+        if self._if_internal_table_exists(full_internal_table_name):
+            return full_internal_table_name, "legacy"
 
         raise Exception(
             f"Could not find internal table for {table_name} with pipeline ID {pipeline_id}"
@@ -777,8 +827,6 @@ class DatabricksOperations:
             # Default schema is always included in shares
             if schema_name == "default":
                 return True
-
-            full_schema_name = f"`{catalog_name}`.`{schema_name}`"
             show_share_query = f"SHOW ALL IN SHARE `{share_name}`"
             full_schema_name = f"{catalog_name}.{schema_name}"
             result = (
@@ -796,6 +844,40 @@ class DatabricksOperations:
         except Exception as e:
             print(
                 f"""Warning: Could not check if schema `{catalog_name}.{schema_name}` is in share `{share_name}`: {e}"""
+            )
+            return False
+
+    def is_table_in_share(self, share_name: str, table_name: str) -> bool:
+        """
+        Check if table is already in the delta share.
+
+        Args:
+            share_name: Name of the share
+            catalog_name: Name of the catalog containing the schema
+            table_name: Name of the table to check
+
+        Returns:
+            True if table is in share, False otherwise
+        """
+        try:
+            full_table_name = ""
+            show_share_query = f"SHOW ALL IN SHARE `{share_name}`"
+            full_table_name = table_name.replace("`", "")
+            result = (
+                self.spark.sql(show_share_query)
+                .filter(f'''
+                        `shared_object` = "{full_table_name}"
+                        and `type` = "TABLE"''')
+                .count()
+            )
+
+            if result > 0:
+                return True
+            return False
+
+        except Exception as e:
+            print(
+                f"""Warning: Could not check if table {full_table_name} is in share `{share_name}`: {e}"""
             )
             return False
 
@@ -830,6 +912,25 @@ class DatabricksOperations:
         except Exception as e:
             raise Exception(
                 f"""Failed to add schema `{catalog_name}.{schema_name}` to share `{share_name}`: {str(e)}"""
+            ) from e
+
+    def get_shared_tables(self, share_name: str) -> List[str]:
+        """
+        Get all tables in a delta share.
+
+        Args:
+            share_name: Name of the share
+        Returns:
+            List of table names in the share
+        """
+        try:
+            query = f"select concat(catalog_name, '.', shared_as_schema, '.', shared_as_table) as table_name from system.information_schema.table_share_usage where share_name = '{share_name}'"
+            result_df = self.spark.sql(query)
+            return [row.table_name for row in result_df.collect()]
+
+        except Exception as e:
+            raise Exception(
+                f"""Failed to get shared tables in share `{share_name}`: {str(e)}"""
             ) from e
 
     def get_provider_name(self, sharing_identifier: str) -> str:
@@ -1067,8 +1168,18 @@ class DatabricksOperations:
             select collect_list(map(column_name,trim(coalesce(comment, ''))))as comment_maps_list from system.information_schema.columns
             where table_catalog = '{catalog_name}' and table_schema = '{schema_name}' and table_name = '{table_name}'
             group by table_catalog, table_catalog, table_name""").collect()[0][0]
-
         return comment_maps_list
+
+    def get_table_comments(self, catalog_name, schema_name, table_name):
+        """
+        Get table comments
+        """
+        table_comment = self.spark.sql(f"""
+            select comment from system.information_schema.tables
+            where table_catalog = '{catalog_name}' and table_schema = '{schema_name}' and table_name = '{table_name}'
+            """).collect()[0][0]
+
+        return table_comment
 
     def get_catalog(self, catalog_name: str) -> CatalogInfo:
         """

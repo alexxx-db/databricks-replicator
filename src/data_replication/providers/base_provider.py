@@ -110,8 +110,9 @@ class BaseProvider(ABC):
         self.processed_objects: List[str] = []
         self.completed_objects: List[str] = [
             f"{result.catalog_name}.{result.schema_name}.{result.object_name}"
-            for result in completed_run_results
+            for result in completed_run_results or []
         ]
+        self.shared_tables: List[str] = []
 
     @abstractmethod
     def setup_operation_catalogs(self):
@@ -262,7 +263,7 @@ class BaseProvider(ABC):
                 UCObjectType.CATALOG in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                run_result = self._replicate_catalog()
+                run_result = self._uc_replicate_catalog()
                 results.extend(run_result)
                 catalog_run_result = []
                 if run_result:
@@ -279,7 +280,7 @@ class BaseProvider(ABC):
                 UCObjectType.CATALOG_TAG in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                run_result = self._replicate_catalog_tags()
+                run_result = self._uc_replicate_catalog_tags()
                 results.extend(run_result)
                 catalog_run_result = []
                 if run_result:
@@ -402,7 +403,7 @@ class BaseProvider(ABC):
                     UCObjectType.SCHEMA in self.catalog_config.uc_object_types
                     or UCObjectType.ALL in self.catalog_config.uc_object_types
                 ):
-                    run_result = self._replicate_schema(schema_config)
+                    run_result = self._uc_replicate_schema(schema_config)
                     results.extend(run_result)
                     schema_run_result = []
                     if run_result:
@@ -419,7 +420,7 @@ class BaseProvider(ABC):
                     UCObjectType.SCHEMA_TAG in self.catalog_config.uc_object_types
                     or UCObjectType.ALL in self.catalog_config.uc_object_types
                 ):
-                    run_result = self._replicate_schema_tags(schema_config)
+                    run_result = self._uc_replicate_schema_tags(schema_config)
                     results.extend(run_result)
                     schema_run_result = []
                     if run_result:
@@ -442,19 +443,25 @@ class BaseProvider(ABC):
                 schema_table_list.extend(schema_tables)
                 schema_volume_list.extend(schema_volumes)
 
-                if schema_results:
-                    # Log summary info to regular logger
-                    successful = sum(
-                        1
-                        for r in schema_results
-                        if schema_results and r.status == "success"
-                    )
-                    total = len(schema_results) if schema_results else 0
+                if self.catalog_config.concurrency.process_schemas_in_serial:
+                    if schema_results:
+                        # Log summary info to regular logger
+                        successful = sum(
+                            1
+                            for r in schema_results
+                            if schema_results and r.status == "success"
+                        )
+                        skipped = sum(
+                            1
+                            for r in schema_results
+                            if schema_results and r.status == "skipped"
+                        )                        
+                        total = len(schema_results) if schema_results else 0
 
-                    self.logger.info(
-                        f"Completed {self.get_operation_name()} for schema {self.catalog_name}.{schema_config.schema_name}: "
-                        f"{successful}/{total} operations successful"
-                    )
+                        self.logger.info(
+                            f"Completed {self.get_operation_name()} for schema {self.catalog_name}.{schema_config.schema_name}: "
+                            f"{successful}/{total} operations successful, {skipped}/{total} operations skipped"
+                        )
 
             if not self.catalog_config.concurrency.process_schemas_in_serial:
                 catalog_run_result = []
@@ -470,18 +477,22 @@ class BaseProvider(ABC):
                             for r in catalog_run_result
                             if catalog_run_result and r.status == "success"
                         )
+                        skipped = sum(
+                            1
+                            for r in catalog_run_result
+                            if catalog_run_result and r.status == "skipped"
+                        )
                         total = len(catalog_run_result) if catalog_run_result else 0
 
                         self.logger.info(
                             f"Completed table {self.get_operation_name()} for catalog {self.catalog_name}: "
-                            f"{successful}/{total} operations successful"
+                            f"{successful}/{total} operations successful, {skipped}/{total} operations skipped"
                         )
-                
+
                 if schema_volume_list:
                     catalog_run_result = self._process_schema_volumes(
                         schema_volume_list, self.catalog_name, start_time
                     )
-                    catalog_run_result = []
                     if catalog_run_result:
                         results.extend(catalog_run_result)
                         # Log summary info to regular logger
@@ -540,20 +551,32 @@ class BaseProvider(ABC):
             if (
                 self.catalog_config.uc_object_types
                 and (
-                    UCObjectType.TABLE_TAG in self.catalog_config.uc_object_types
-                    or UCObjectType.ALL in self.catalog_config.uc_object_types
-                    or UCObjectType.COLUMN_TAG in self.catalog_config.uc_object_types
-                    or UCObjectType.COLUMN_COMMENT
-                    or UCObjectType.VIEW in self.catalog_config.uc_object_types
+                    any(
+                        t in self.catalog_config.uc_object_types
+                        for t in [
+                            UCObjectType.TABLE_TAG,
+                            UCObjectType.ALL,
+                            UCObjectType.COLUMN_TAG,
+                            UCObjectType.COLUMN_COMMENT,
+                            UCObjectType.VIEW,
+                            UCObjectType.TABLE,
+                            UCObjectType.TABLE_COMMENT,
+                        ]
+                    )
                 )
             ) or self.catalog_config.table_types:
                 table_configs = self._get_tables(schema_config, schema_config.tables)
             if (
                 self.catalog_config.uc_object_types
                 and (
-                    UCObjectType.VOLUME_TAG in self.catalog_config.uc_object_types
-                    or UCObjectType.VOLUME in self.catalog_config.uc_object_types
-                    or UCObjectType.ALL in self.catalog_config.uc_object_types
+                    any(
+                        t in self.catalog_config.uc_object_types
+                        for t in [
+                            UCObjectType.VOLUME_TAG,
+                            UCObjectType.VOLUME,
+                            UCObjectType.ALL,
+                        ]
+                    )
                 )
             ) or self.catalog_config.volume_types:
                 volume_configs = self._get_volumes(schema_config, schema_config.volumes)
@@ -660,9 +683,15 @@ class BaseProvider(ABC):
                     results.extend(result)
                     # Check if any result in the list failed
                     for single_result in result:
-                        if single_result.status != "success":
+                        if single_result.status == "failed":
                             self.logger.error(
-                                f"Failed to process table "
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type}"
+                                f"{catalog_name}.{schema_name}.{table_name}: "
+                                f"{single_result.error_message}"
+                            )
+                        if single_result.status == "skipped":
+                            self.logger.warning(
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type}"
                                 f"{catalog_name}.{schema_name}.{table_name}: "
                                 f"{single_result.error_message}"
                             )
@@ -805,9 +834,15 @@ class BaseProvider(ABC):
                     results.extend(result)
                     # Check if any result in the list failed
                     for single_result in result:
-                        if single_result.status != "success":
+                        if single_result.status == "failed":
                             self.logger.error(
-                                f"Failed to process table "
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type} "
+                                f"{catalog_name}.{schema_name}.{table_name}: "
+                                f"{single_result.error_message}"
+                            )
+                        if single_result.status == "skipped":
+                            self.logger.warning(
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type} "
                                 f"{catalog_name}.{schema_name}.{table_name}: "
                                 f"{single_result.error_message}"
                             )
@@ -879,9 +914,9 @@ class BaseProvider(ABC):
                     results.extend(result)
                     # Check if any result in the list failed
                     for single_result in result:
-                        if single_result.status != "success":
+                        if single_result.status == "failed":
                             self.logger.error(
-                                f"Failed to process volume "
+                                f"{single_result.status} to {single_result.operation_type} {single_result.object_type} "
                                 f"{catalog_name}.{schema_name}.{volume_name}: "
                                 f"{single_result.error_message}"
                             )
@@ -898,7 +933,7 @@ class BaseProvider(ABC):
                     results.extend(result)
                 finally:
                     self.processed_objects.append(f"{schema_name}.{volume_name}")
-                    
+
         executor.shutdown(wait=True)
 
         self.logger.info(
@@ -1174,20 +1209,34 @@ class BaseProvider(ABC):
         # Apply exclusions first
         table_names = [table for table in table_names if table not in exclude_names]
 
-        table_names_filtered = table_names
+        table_names_unprocessed = table_names
         # Skip already processed tables
         if SKIP_PROCESSED_TABLES:
-            table_names = [
+            table_names_unprocessed = [
                 table
                 for table in table_names
                 if f"{schema_name}.{table}" not in self.processed_objects
                 and f"{self.catalog_config.catalog_name}.{schema_name}.{table}"
                 not in self.completed_objects
             ]
-        if len(table_names_filtered) != len(table_names):
+        if len(table_names_unprocessed) != len(table_names):
             self.logger.info(
-                f"Found {len(table_names)} and exclude {len(table_names) - len(table_names_filtered)} processed tables"
+                f"Exclude {len(table_names) - len(table_names_unprocessed)} processed tables from {len(table_names)} tables"
             )
+
+        table_names_unshared = table_names_unprocessed
+        if self.shared_tables:
+            # Exclude tables that are already in shared tables
+            table_names_unshared = [
+                table
+                for table in table_names_unprocessed
+                if f"{self.catalog_name}.{schema_name}.{table}"
+                not in self.shared_tables
+            ]
+            if len(table_names_unshared) != len(table_names_unprocessed):
+                self.logger.info(
+                    f"Exclude {len(table_names_unprocessed) - len(table_names_unshared)} already shared tables from {len(table_names_unprocessed)} tables"
+                )
 
         table_types = []
         # get table type filters from schema configuration
@@ -1210,6 +1259,10 @@ class BaseProvider(ABC):
                 table_types_set.update(
                     ["managed", "external", "streaming_table", "view"]
                 )
+            if UCObjectType.TABLE_COMMENT in schema_config.uc_object_types:
+                table_types_set.update(["managed", "external", "view"])
+            if UCObjectType.TABLE in schema_config.uc_object_types:
+                table_types_set.update(["managed", "external"])
             if UCObjectType.VIEW in schema_config.uc_object_types:
                 table_types_set.update(["view"])
             if table_types_set:
@@ -1218,10 +1271,14 @@ class BaseProvider(ABC):
         filtered_table_names = self.db_ops.filter_tables_by_type(
             self.catalog_name,
             schema_name,
-            table_names_filtered,
+            table_names_unshared,
             table_types,
             schema_config.concurrency.parallel_table_filter,
         )
+        if len(filtered_table_names) != len(table_names_unshared):
+            self.logger.info(
+                f"Exclude {len(table_names_unshared) - len(filtered_table_names)} table types unmatched tables from {len(table_names_unshared)} tables"
+            )
         # Then filter by table types
         return [table for table in tables if table.table_name in filtered_table_names]
 
@@ -1272,6 +1329,7 @@ class BaseProvider(ABC):
         if schema_config.uc_object_types and (
             UCObjectType.VOLUME in schema_config.uc_object_types
             or UCObjectType.VOLUME_TAG in schema_config.uc_object_types
+            or UCObjectType.ALL in schema_config.uc_object_types
         ):
             volume_types.extend(["managed", "external"])
 
@@ -1281,6 +1339,10 @@ class BaseProvider(ABC):
             volume_names,
             volume_types,
         )
+        if len(filtered_volume_names) != len(volume_names):
+            self.logger.info(
+                f"Exclude {len(volume_names) - len(filtered_volume_names)} volume types unmatched volumes from {len(volume_names)} volumes"
+            )        
         # Then filter by volume types
         return [
             volume for volume in volumes if volume.volume_name in filtered_volume_names
@@ -1562,7 +1624,7 @@ class BaseProvider(ABC):
             max_attempts=max_attempts,
         )
 
-    def _replicate_catalog_tags(
+    def _uc_replicate_catalog_tags(
         self,
     ) -> list[RunResult]:
         """
@@ -1624,7 +1686,7 @@ class BaseProvider(ABC):
         run_results.append(run_result)
         return run_results
 
-    def _replicate_schema_tags(
+    def _uc_replicate_schema_tags(
         self,
         schema_config: SchemaConfig,
     ) -> list[RunResult]:
@@ -1696,7 +1758,7 @@ class BaseProvider(ABC):
         run_results.append(run_result)
         return run_results
 
-    def _replicate_catalog(self) -> List[RunResult]:
+    def _uc_replicate_catalog(self) -> List[RunResult]:
         """
         Replicate catalog from source to target using workspace client.
         If storage location exists, uses external_location mapping to determine target path.
@@ -1894,7 +1956,7 @@ class BaseProvider(ABC):
 
         return run_results
 
-    def _replicate_schema(self, schema_config: SchemaConfig) -> List[RunResult]:
+    def _uc_replicate_schema(self, schema_config: SchemaConfig) -> List[RunResult]:
         """
         Replicate schema from source to target using workspace client.
 

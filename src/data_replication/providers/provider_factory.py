@@ -182,7 +182,6 @@ class ProviderFactory:
         else:
             raise ValueError(f"Unknown operation type: {self._operation_type}")
 
-
         return provider_class(
             self.spark,
             self.logger,
@@ -224,6 +223,9 @@ class ProviderFactory:
             1 for r in results if results and r.status == "success"
         )
         failed_operations = sum(1 for r in results if results and r.status == "failed")
+        skipped_operations = sum(
+            1 for r in results if results and r.status == "skipped"
+        )
         total_operations = len(results) if results else 0
 
         status = "completed" if failed_operations == 0 else "completed_with_failures"
@@ -248,8 +250,8 @@ class ProviderFactory:
         )
         summary_text = (
             f"{operation_type.title()} operation completed in {duration:.1f}s. "
-            f"Processed {len(catalogs)} catalogs, {len(schemas)} schemas, "
-            f"{len(objects)} objects. Success rate: {successful_operations}/"
+            f"Processed {len(catalogs)} catalogs, {len(schemas)} schemas, {len(objects)} objects, "
+            f"{total_operations} operations:{successful_operations} successful, {failed_operations} failed,{skipped_operations} skipped. Success rate: {successful_operations}/"
             f"{total_operations} ({success_rate:.1f}%)"
         )
 
@@ -344,7 +346,6 @@ class ProviderFactory:
         )
 
         try:
-
             # Check if storage credential replication is needed (only for replication operations)
             # Only check system-level uc_object_types
             if (
@@ -404,12 +405,15 @@ class ProviderFactory:
 
             if not enabled_catalogs:
                 self.logger.info(f"No catalogs configured for {operation_name}")
-                return self.create_summary(start_time, self.completed_run_results, operation_name)
+                return self.create_summary(
+                    start_time, self.completed_run_results, operation_name
+                )
 
             self._run_catalog_operations(enabled_catalogs)
 
-
-            summary = self.create_summary(start_time, self.completed_run_results, operation_name)
+            summary = self.create_summary(
+                start_time, self.completed_run_results, operation_name
+            )
 
             # Log final summary
             self.log_run_summary(summary, operation_name)
@@ -676,7 +680,9 @@ class ProviderFactory:
 
                 for location in all_source_locations:
                     location_url = getattr(location, "url", None)
-                    target_url = map_cloud_url(location_url, self.config.cloud_url_mapping)
+                    target_url = map_cloud_url(
+                        location_url, self.config.cloud_url_mapping
+                    )
                     if target_url:
                         external_locations_to_replicate.append(location.name)
 
@@ -885,18 +891,23 @@ class ProviderFactory:
                 provider = self.create_provider(catalog)
                 catalog_results = provider.process_catalog()
                 results.extend(catalog_results)
-                self.completed_run_results.extend(catalog_results)                
+                self.completed_run_results.extend(catalog_results)
 
                 successful = sum(
                     1
                     for r in catalog_results
                     if catalog_results and r.status == "success"
                 )
+                skipped = sum(
+                    1
+                    for r in catalog_results
+                    if catalog_results and r.status == "skipped"
+                )
                 total = len(catalog_results) if catalog_results else 0
 
                 self.logger.info(
                     f"Completed {operation_name} for catalog {catalog.catalog_name}: "
-                    f"{successful}/{total} operations successful"
+                    f"{successful}/{total} operations successful, {skipped}/{total} operations skipped"
                 )
 
             except Exception as e:

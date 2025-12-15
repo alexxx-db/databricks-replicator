@@ -216,7 +216,7 @@ def main():
             target_schemas_override=args.target_schemas,
             target_tables_override=args.target_tables,
             target_volumes_override=args.target_volumes,
-            table_filter_expression_override=args.table_filter_expression,
+            schema_table_filter_expression_override=args.schema_table_filter_expression,
             concurrency_override=args.concurrency,
             uc_object_types_override=uc_object_types_override,
             table_types_override=table_types_override,
@@ -386,7 +386,7 @@ def main():
                     "Reconciliation disabled or No catalogs configured for reconciliation"
                 )
 
-        logger.info(f"All Operations Ends {'-' * 60}")
+        logger.info(f"All Operations Ends. Check log with run_id {run_id} in {config.audit_config.audit_table} at {logging_workspace_url} {'-' * 30}")
 
     except ConfigurationError as e:
         logger.error(f"Configuration error: {e}")

@@ -6,6 +6,7 @@ streaming tables, materialized views, and intermediate catalogs.
 """
 
 from datetime import datetime, timezone
+import re
 from typing import List
 from databricks.sdk.service.catalog import VolumeType
 from data_replication.databricks_operations import DatabricksOperations
@@ -26,6 +27,7 @@ from ..utils import (
     map_cloud_url,
     merge_maps,
     recursive_substitute,
+    replace_cloud_url,
     retry_with_logging,
     create_spark_session,
     validate_spark_session,
@@ -53,13 +55,18 @@ class ReplicationProvider(BaseProvider):
             workspace_client=self.workspace_client,
             auth_type=self.target_databricks_config.auth_type,
         )
-        # default driving spark is target spark. Create source spark for uc replication or if create_shared_catalog is True but source_databricks_connect_config.sharing_identifier is not provided
+        # default driving spark is target spark. Create source spark for uc replication or if create_shared_catalog is True but provider_name and source_databricks_connect_config.sharing_identifier is not provided
         if (
             self.catalog_config.uc_object_types
             and len(self.catalog_config.uc_object_types) > 0
         ) or (
             self.catalog_config.replication_config
-            and self.catalog_config.replication_config.create_shared_catalog
+            and (
+                self.catalog_config.replication_config.create_shared_catalog
+                or self.catalog_config.replication_config.create_dpm_backing_table_shared_catalog
+                or self.catalog_config.replication_config.create_backup_shared_catalog
+            )
+            and not self.catalog_config.replication_config.provider_name
             and not self.source_databricks_config.sharing_identifier
         ):
             source_host = self.source_databricks_config.host
@@ -136,25 +143,48 @@ class ReplicationProvider(BaseProvider):
                     replication_config.intermediate_catalog_location,
                 )
 
-            # Create source catalog from share if needed
-            if replication_config.create_shared_catalog:
-                sharing_identifier = self.source_databricks_config.sharing_identifier
-                if not sharing_identifier:
-                    sharing_identifier = self.source_dbops.get_metastore_id()
-                provider_name = self.db_ops.get_provider_name(sharing_identifier)
-                self.logger.info(
-                    f"""Creating source catalog from share: {replication_config.source_catalog} using share name: {replication_config.share_name}"""
-                )
-                self.db_ops.create_catalog_using_share_if_not_exists(
-                    replication_config.source_catalog,
-                    provider_name,
-                    replication_config.share_name,
-                )
-                if replication_config.backup_catalog:
+            # Create shared catalog from share if needed
+            if (
+                replication_config.create_shared_catalog
+                or replication_config.create_dpm_backing_table_shared_catalog
+                or replication_config.create_backup_shared_catalog
+            ):
+                if replication_config.provider_name:
+                    provider_name = replication_config.provider_name
+                else:
+                    sharing_identifier = (
+                        self.source_databricks_config.sharing_identifier
+                    )
+                    if not sharing_identifier:
+                        sharing_identifier = self.source_dbops.get_metastore_id()
+                    provider_name = self.db_ops.get_provider_name(sharing_identifier)
+                if replication_config.create_shared_catalog:
+                    self.logger.info(
+                        f"""Creating source catalog from: {replication_config.source_catalog} using share name: {replication_config.share_name}"""
+                    )
                     self.db_ops.create_catalog_using_share_if_not_exists(
-                        replication_config.backup_catalog,
+                        replication_config.source_catalog,
                         provider_name,
-                        replication_config.backup_share_name,
+                        replication_config.share_name,
+                    )
+                if replication_config.create_backup_shared_catalog:
+                    self.logger.info(
+                        f"""Creating backup catalog from share: {replication_config.backup_catalog} using share name: {replication_config.backup_share_name}"""
+                    )
+                    if replication_config.backup_catalog:
+                        self.db_ops.create_catalog_using_share_if_not_exists(
+                            replication_config.backup_catalog,
+                            provider_name,
+                            replication_config.backup_share_name,
+                        )
+                if replication_config.create_dpm_backing_table_shared_catalog:
+                    self.logger.info(
+                        f"""Creating DPM backing table catalog from: {replication_config.dpm_backing_table_catalog} using share name: {replication_config.dpm_backing_table_share_name}"""
+                    )
+                    self.db_ops.create_catalog_using_share_if_not_exists(
+                        replication_config.dpm_backing_table_catalog,
+                        provider_name,
+                        replication_config.dpm_backing_table_share_name,
                     )
 
             if replication_config.volume_config:
@@ -203,10 +233,20 @@ class ReplicationProvider(BaseProvider):
 
         if self.catalog_config.uc_object_types:
             if (
-                UCObjectType.VIEW in self.catalog_config.uc_object_types
+                UCObjectType.TABLE in self.catalog_config.uc_object_types
+                or UCObjectType.VIEW in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                result = self._replicate_view(
+                result = self._uc_replicate_ddl(
+                    schema_name,
+                    table_config,
+                )
+                results.extend(result)
+            if (
+                UCObjectType.TABLE_COMMENT in self.catalog_config.uc_object_types
+                or UCObjectType.ALL in self.catalog_config.uc_object_types
+            ):
+                result = self._uc_replicate_table_comments(
                     schema_name,
                     table_config,
                 )
@@ -215,16 +255,7 @@ class ReplicationProvider(BaseProvider):
                 UCObjectType.TABLE_TAG in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                result = self._replicate_table_tags(
-                    schema_name,
-                    table_config,
-                )
-                results.extend(result)
-            if (
-                UCObjectType.COLUMN_TAG in self.catalog_config.uc_object_types
-                or UCObjectType.ALL in self.catalog_config.uc_object_types
-            ):
-                result = self._replicate_column_tags(
+                result = self._uc_replicate_table_tags(
                     schema_name,
                     table_config,
                 )
@@ -233,7 +264,16 @@ class ReplicationProvider(BaseProvider):
                 UCObjectType.COLUMN_COMMENT in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             ):
-                result = self._replicate_column_comments(
+                result = self._uc_replicate_column_comments(
+                    schema_name,
+                    table_config,
+                )
+                results.extend(result)
+            if (
+                UCObjectType.COLUMN_TAG in self.catalog_config.uc_object_types
+                or UCObjectType.ALL in self.catalog_config.uc_object_types
+            ):
+                result = self._uc_replicate_column_tags(
                     schema_name,
                     table_config,
                 )
@@ -258,7 +298,7 @@ class ReplicationProvider(BaseProvider):
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             )
         ):
-            result = self._replicate_volume(schema_name, volume_config)
+            result = self._uc_replicate_volume(schema_name, volume_config)
             results.extend(result)
         # Check for volume tag replication
         if (
@@ -269,7 +309,7 @@ class ReplicationProvider(BaseProvider):
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
             )
         ):
-            result = self._replicate_volume_tags(
+            result = self._uc_replicate_volume_tags(
                 schema_name,
                 volume_config,
             )
@@ -311,6 +351,7 @@ class ReplicationProvider(BaseProvider):
         step1_query = None
         step2_query = None
         dlt_flag = None
+        dlt_type = None
         attempt = 1
         max_attempts = table_config.retry.max_attempts
         retry = table_config.retry
@@ -325,8 +366,28 @@ class ReplicationProvider(BaseProvider):
             # Get source table type to determine replication strategy
             source_table_type = self.db_ops.get_table_type(source_table)
             if source_table_type.upper() == TableType.STREAMING_TABLE.upper():
-                backup_catalog = replication_config.backup_catalog
-                source_table = f"`{backup_catalog}`.`{schema_name}`.`{table_name}`"
+                table_exists = False
+                # For streaming tables, check if DPM backing table catalog is specified and use it as source if the table exists there
+                if replication_config.dpm_backing_table_catalog:
+                    source_table = f"`{replication_config.dpm_backing_table_catalog}`.`{schema_name}`.`{table_name}`"
+                    self.db_ops.refresh_table_metadata(source_table)
+                    table_exists = self.spark.catalog.tableExists(source_table)
+                # If not found in DPM backing table catalog, check backup catalog as fallback
+                if not table_exists:
+                    if replication_config.backup_catalog:
+                        backup_catalog = replication_config.backup_catalog
+                        source_table = (
+                            f"`{backup_catalog}`.`{schema_name}`.`{table_name}`"
+                        )
+                        self.db_ops.refresh_table_metadata(source_table)
+                        if not self.spark.catalog.tableExists(source_table):
+                            raise TableNotFoundError(
+                                f"{source_table} not found in dpm or backup catalog"
+                            )
+                    else:
+                        raise TableNotFoundError(
+                            "Backup catalog not specified for streaming table"
+                        )
 
             self.logger.info(
                 f"Starting replication: {source_table} -> {target_table}",
@@ -340,6 +401,18 @@ class ReplicationProvider(BaseProvider):
                 actual_target_table = table_details["table_name"]
                 dlt_flag = table_details["is_dlt"]
                 pipeline_id = table_details["pipeline_id"]
+                dlt_type = table_details["dlt_type"]
+                parent_table_id = table_details.get("parent_table_id")
+                if dlt_type == "dpm":
+                    # Prequisite: the executing user is authorized to grant MODIFY to itself. i.e. metastore admin or owner of the table
+                    # Explicitly grant access to dpm backing table before clone
+                    current_user = self.db_ops.get_current_user()
+                    sql = f"GRANT MODIFY ON TABLE {actual_target_table} TO `{current_user}`"
+                    self.logger.debug(
+                        f"Granting MODIFY on DPM backing table {actual_target_table} to user {current_user}",
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
+                    self.spark.sql(sql)
             except TableNotFoundError as exc:
                 table_details = self.db_ops.get_table_details(source_table)
                 if table_details["is_dlt"]:
@@ -377,7 +450,22 @@ class ReplicationProvider(BaseProvider):
                     f"Executing replication query: {query}",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
-                self.spark.sql(query)
+                if dlt_flag:
+                    # For DLT tables, catch and ignore specific parent table property error
+                    try:
+                        self.spark.sql(query)
+                    except Exception as e:
+                        if "PARENT TABLE WITH ID" in str(e).upper():
+                            self.logger.info(
+                                "Parent table with id error, can be ignored for DLT table replication.",
+                                extra={
+                                    "run_id": self.run_id,
+                                    "operation": "replication",
+                                },
+                            )
+                else:
+                    self.spark.sql(query)
+
                 return True
 
             # Determine replication strategy based on table type and config
@@ -416,6 +504,7 @@ class ReplicationProvider(BaseProvider):
                     schema_name,
                     table_name,
                     pipeline_id,
+                    parent_table_id,
                     replication_operation,
                     replication_config,
                 )
@@ -432,6 +521,7 @@ class ReplicationProvider(BaseProvider):
                     source_table,
                     actual_target_table,
                     pipeline_id,
+                    parent_table_id,
                     replication_operation,
                     replication_config,
                 )
@@ -462,6 +552,7 @@ class ReplicationProvider(BaseProvider):
                             "source_table": source_table,
                             "table_type": source_table_type,
                             "dlt_flag": dlt_flag,
+                            "dlt_type": dlt_type,
                             "intermediate_catalog": replication_config.intermediate_catalog,
                             "step1_query": step1_query,
                             "step2_query": step2_query,
@@ -499,6 +590,7 @@ class ReplicationProvider(BaseProvider):
                         "source_table": source_table,
                         "table_type": source_table_type,
                         "dlt_flag": dlt_flag,
+                        "dlt_type": dlt_type,
                         "intermediate_catalog": replication_config.intermediate_catalog,
                         "step1_query": step1_query,
                         "step2_query": step2_query,
@@ -539,6 +631,7 @@ class ReplicationProvider(BaseProvider):
                         "source_table": source_table,
                         "table_type": source_table_type,
                         "dlt_flag": dlt_flag,
+                        "dlt_type": dlt_type,
                         "intermediate_catalog": replication_config.intermediate_catalog,
                         "step1_query": step1_query,
                         "step2_query": step2_query,
@@ -944,6 +1037,7 @@ class ReplicationProvider(BaseProvider):
         schema_name: str,
         table_name: str,
         pipeline_id: str,
+        parent_table_id: str,
         replication_operation,
         replication_config,
     ) -> tuple:
@@ -954,7 +1048,7 @@ class ReplicationProvider(BaseProvider):
 
         # Step 1: Deep clone to intermediate
         step1_query = self._build_deep_clone_query(
-            source_table, intermediate_table, None, replication_config
+            source_table, intermediate_table, None, None, replication_config
         )
 
         result1, last_exception, attempt, max_attempts = replication_operation(
@@ -972,7 +1066,7 @@ class ReplicationProvider(BaseProvider):
 
         # Use deep clone
         step2_query = self._build_deep_clone_query(
-            source_table, target_table, pipeline_id, replication_config
+            source_table, target_table, pipeline_id, parent_table_id, replication_config
         )
 
         return (
@@ -986,6 +1080,7 @@ class ReplicationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         pipeline_id: str,
+        parent_table_id: str,
         replication_operation,
         replication_config,
     ) -> tuple:
@@ -993,7 +1088,7 @@ class ReplicationProvider(BaseProvider):
 
         # Use deep clone
         step1_query = self._build_deep_clone_query(
-            source_table, target_table, pipeline_id, replication_config
+            source_table, target_table, pipeline_id, parent_table_id, replication_config
         )
 
         return *replication_operation(step1_query), step1_query, None
@@ -1050,7 +1145,11 @@ class ReplicationProvider(BaseProvider):
         # Step 4: Deep clone to target location if copy_files is enabled
         if replication_config.copy_files:
             step1_query = self._build_deep_clone_query(
-                source_table, f"delta.`{target_location}`", None, replication_config
+                source_table,
+                f"delta.`{target_location}`",
+                None,
+                None,
+                replication_config,
             )
 
             # Execute the deep clone
@@ -1100,6 +1199,7 @@ class ReplicationProvider(BaseProvider):
         source_table: str,
         target_table: str,
         pipeline_id: str = None,
+        parent_table_id: str = None,
         replication_config=None,
     ) -> str:
         """Build deep clone query."""
@@ -1107,13 +1207,273 @@ class ReplicationProvider(BaseProvider):
         sql = f"CREATE OR REPLACE TABLE {target_table} DEEP CLONE {source_table} "
 
         if pipeline_id:
+            if parent_table_id:
+                # For dlt streaming tables/materialized views, use CREATE OR REPLACE TABLE with pipelineId and parentTableId properties
+                return f"{sql} TBLPROPERTIES ('pipelines.pipelineId'='{pipeline_id}', 'spark.sql.internal.pipelines.parentTableId'='{parent_table_id}')"
             # For dlt streaming tables/materialized views, use CREATE OR REPLACE TABLE with pipelineId property
             return f"{sql} TBLPROPERTIES ('pipelines.pipelineId'='{pipeline_id}')"
 
         # For regular tables, just return the deep clone query
         return sql
 
-    def _replicate_table_tags(
+    def _uc_replicate_table_comments(
+        self,
+        schema_name: str,
+        table_config: TableConfig,
+    ) -> List[RunResult]:
+        """
+        Replicate table comments from source to target table.
+
+        Args:
+            schema_name: Schema name
+            table_config: TableConfig object containing table details
+
+        Returns:
+            RunResult object for the table comment replication operation
+        """
+        start_time = datetime.now(timezone.utc)
+        run_results = []
+        table_name = table_config.table_name
+        replication_config = table_config.replication_config
+        source_catalog = replication_config.source_catalog
+        target_catalog = self.catalog_config.catalog_name
+        object_type = "table_comment"
+        source_table = f"`{source_catalog}`.`{schema_name}`.`{table_name}`"
+        target_table = f"`{target_catalog}`.`{schema_name}`.`{table_name}`"
+        max_attempts = table_config.retry.max_attempts
+        attempt = 1
+
+        # Use custom retry decorator with logging
+        @retry_with_logging(table_config.retry, self.logger)
+        def replication_operation(query: str):
+            self.logger.debug(
+                f"Executing table comment replication query: {query}",
+                extra={"run_id": self.run_id, "operation": "replication"},
+            )
+            self.target_spark.sql(query)
+            return True
+
+        try:
+            table_type = self.source_dbops.get_table_type(source_table)
+            if table_type.upper() not in ["VIEW", "MANAGED", "EXTERNAL"]:
+                self.logger.info(
+                    f"{object_type} is not supported for {table_type} and are skipped for {source_table} -> {target_table}.Declare {object_type} in DLT pipeline instead",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                run_results.append(
+                    RunResult(
+                        operation_type="uc_replication",
+                        catalog_name=target_catalog,
+                        schema_name=schema_name,
+                        object_name=table_name,
+                        object_type=object_type,
+                        status="skipped",
+                        start_time=start_time.isoformat(),
+                        end_time=end_time.isoformat(),
+                        duration_seconds=duration,
+                        error_message=f"{object_type} is not supported for {table_type}",
+                        details={
+                            "source_object": source_table,
+                            "target_object": target_table,
+                            "overwrite_comments": replication_config.overwrite_comments,
+                            "table_type": table_type,
+                        },
+                        attempt_number=attempt,
+                        max_attempts=max_attempts,
+                    )
+                )
+                return run_results
+            if not replication_config.overwrite_comments:
+                self.logger.info(
+                    f"overwrite_comments is false for {source_table} -> {target_table} ",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                run_results.append(
+                    RunResult(
+                        operation_type="uc_replication",
+                        catalog_name=target_catalog,
+                        schema_name=schema_name,
+                        object_name=table_name,
+                        object_type=object_type,
+                        status="success",
+                        start_time=start_time.isoformat(),
+                        end_time=end_time.isoformat(),
+                        duration_seconds=duration,
+                        details={
+                            "source_object": source_table,
+                            "target_object": target_table,
+                            "overwrite_comments": replication_config.overwrite_comments,
+                            "table_type": table_type,
+                        },
+                        attempt_number=attempt,
+                        max_attempts=max_attempts,
+                    )
+                )
+                return run_results
+            if self.source_spark.catalog.tableExists(
+                source_table
+            ) and self.target_spark.catalog.tableExists(target_table):
+                # Get target and source table comments
+                target_comment = self.target_dbops.get_table_comments(
+                    target_catalog, schema_name, table_name
+                )
+                source_comment = self.source_dbops.get_table_comments(
+                    source_catalog, schema_name, table_name
+                )
+
+                if (not source_comment and not target_comment) or (
+                    source_comment == target_comment
+                ):
+                    self.logger.info(
+                        f"No comment change found for: {source_table} -> {target_table}",
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
+                    end_time = datetime.now(timezone.utc)
+                    duration = (end_time - start_time).total_seconds()
+                    run_results.append(
+                        RunResult(
+                            operation_type="uc_replication",
+                            catalog_name=target_catalog,
+                            schema_name=schema_name,
+                            object_name=table_name,
+                            object_type=object_type,
+                            status="success",
+                            start_time=start_time.isoformat(),
+                            end_time=end_time.isoformat(),
+                            duration_seconds=duration,
+                            details={
+                                "source_object": source_table,
+                                "target_object": target_table,
+                                "overwrite_comments": replication_config.overwrite_comments,
+                                "table_type": table_type,
+                            },
+                            attempt_number=attempt,
+                            max_attempts=max_attempts,
+                        )
+                    )
+                    return run_results
+
+                query = ""
+                if table_type.upper() == "VIEW":
+                    query = f"""
+                    COMMENT ON VIEW {target_table} IS '{source_comment}'
+                    """
+                if table_type.lower() in ["managed", "external"]:
+                    query = f"""
+                    COMMENT ON TABLE {target_table} IS '{source_comment}'
+                    """
+
+                # Execute the replication
+                result, last_exception, attempt, max_attempts = replication_operation(
+                    query
+                )
+
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+
+                if result:
+                    self.logger.info(
+                        f"{object_type} replication completed successfully: {source_table} -> {target_table} "
+                        f"({duration:.2f}s)",
+                        extra={"run_id": self.run_id, "operation": "replication"},
+                    )
+
+                    run_results.append(
+                        RunResult(
+                            operation_type="uc_replication",
+                            catalog_name=target_catalog,
+                            schema_name=schema_name,
+                            object_name=table_name,
+                            object_type=object_type,
+                            status="success",
+                            start_time=start_time.isoformat(),
+                            end_time=end_time.isoformat(),
+                            duration_seconds=duration,
+                            details={
+                                "source_object": source_table,
+                                "target_object": target_table,
+                                "overwrite_comments": replication_config.overwrite_comments,
+                                "table_type": table_type,
+                            },
+                            attempt_number=attempt,
+                            max_attempts=max_attempts,
+                        )
+                    )
+                    return run_results
+            else:
+                self.logger.warning(
+                    f"Source or target table does not exist for {object_type} replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
+                    extra={"run_id": self.run_id, "operation": "replication"},
+                )
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                run_results.append(
+                    RunResult(
+                        operation_type="uc_replication",
+                        catalog_name=target_catalog,
+                        schema_name=schema_name,
+                        object_name=table_name,
+                        object_type="table_comment",
+                        status="failed",
+                        start_time=start_time.isoformat(),
+                        end_time=end_time.isoformat(),
+                        duration_seconds=duration,
+                        error_message="Source or Target table does not exist",
+                        details={
+                            "source_object": source_table,
+                            "target_object": target_table,
+                        },
+                        attempt_number=1,
+                        max_attempts=max_attempts,
+                    )
+                )
+                return run_results
+        except Exception as e:
+            last_exception = e
+
+        # Handle failure case
+        end_time = datetime.now(timezone.utc)
+        duration = (end_time - start_time).total_seconds()
+
+        error_msg = f"Table comment replication failed {source_table} -> {target_table}"
+        if last_exception:
+            error_msg += f" | Last error: {str(last_exception)}"
+
+        self.logger.error(
+            error_msg,
+            extra={"run_id": self.run_id, "operation": "replication"},
+        )
+
+        run_results.append(
+            RunResult(
+                operation_type="uc_replication",
+                catalog_name=target_catalog,
+                schema_name=schema_name,
+                object_name=table_name,
+                object_type="table_comment",
+                status="failed",
+                start_time=start_time.isoformat(),
+                end_time=end_time.isoformat(),
+                duration_seconds=duration,
+                error_message=str(last_exception)
+                if last_exception
+                else "Unknown error",
+                details={
+                    "source_object": source_table,
+                    "target_object": target_table,
+                    "overwrite_comments": replication_config.overwrite_comments,
+                },
+                attempt_number=1,
+                max_attempts=max_attempts,
+            )
+        )
+        return run_results
+
+    def _uc_replicate_table_tags(
         self,
         schema_name: str,
         table_config: TableConfig,
@@ -1166,7 +1526,7 @@ class ReplicationProvider(BaseProvider):
             run_results.append(run_result)
         else:
             self.logger.warning(
-                f"Source or target table does not exist for tag replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
+                f"Source or target table does not exist for {object_type} replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
                 extra={"run_id": self.run_id, "operation": "replication"},
             )
             end_time = datetime.now(timezone.utc)
@@ -1193,7 +1553,7 @@ class ReplicationProvider(BaseProvider):
             )
         return run_results
 
-    def _replicate_column_tags(
+    def _uc_replicate_column_tags(
         self,
         schema_name: str,
         table_config: TableConfig,
@@ -1225,7 +1585,7 @@ class ReplicationProvider(BaseProvider):
                 source_table
             ) or not self.target_spark.catalog.tableExists(target_table):
                 self.logger.warning(
-                    f"Source or target table does not exist for column tag replication: {source_table} -> {target_table}",
+                    f"Source or target table does not exist for {object_type} replication: {source_table} -> {target_table}",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
                 end_time = datetime.now(timezone.utc)
@@ -1446,7 +1806,7 @@ class ReplicationProvider(BaseProvider):
         )
         return run_results
 
-    def _replicate_volume_tags(
+    def _uc_replicate_volume_tags(
         self,
         schema_name: str,
         volume_config: VolumeConfig,
@@ -1527,7 +1887,7 @@ class ReplicationProvider(BaseProvider):
         run_results.append(run_result)
         return run_results
 
-    def _replicate_volume(
+    def _uc_replicate_volume(
         self, schema_name: str, volume_config: VolumeConfig
     ) -> List[RunResult]:
         """
@@ -1737,7 +2097,7 @@ class ReplicationProvider(BaseProvider):
 
         return run_results
 
-    def _replicate_column_comments(
+    def _uc_replicate_column_comments(
         self,
         schema_name: str,
         table_config: TableConfig,
@@ -1782,7 +2142,7 @@ class ReplicationProvider(BaseProvider):
                 source_table
             ) or not self.target_spark.catalog.tableExists(target_table):
                 self.logger.warning(
-                    f"Source or target table does not exist for comment replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
+                    f"Source or target table does not exist for {object_type} replication: `{target_catalog}`.`{schema_name}`.`{table_name}`",
                     extra={"run_id": self.run_id, "operation": "replication"},
                 )
                 end_time = datetime.now(timezone.utc)
@@ -1849,7 +2209,6 @@ class ReplicationProvider(BaseProvider):
                             "source_object": source_table,
                             "target_object": target_table,
                             "overwrite_comments": replication_config.overwrite_comments,
-                            "skipped": True,
                         },
                         attempt_number=attempt,
                         max_attempts=max_attempts,
@@ -1904,9 +2263,32 @@ class ReplicationProvider(BaseProvider):
                     )
                 else:
                     self.logger.warning(
-                        f"Unsupported table type for column comment replication: {table_type} for table {source_table}",
+                        f"{object_type} is not supported for {table_type} and are skipped for {source_table} -> {target_table}.Declare {object_type} in DLT pipeline instead",
                         extra={"run_id": self.run_id, "operation": "replication"},
                     )
+                    end_time = datetime.now(timezone.utc)
+                    duration = (end_time - start_time).total_seconds()
+                    return [
+                        RunResult(
+                            operation_type="uc_replication",
+                            catalog_name=target_catalog,
+                            schema_name=schema_name,
+                            object_name=table_name,
+                            object_type=object_type,
+                            status="skipped",
+                            start_time=start_time.isoformat(),
+                            end_time=end_time.isoformat(),
+                            duration_seconds=duration,
+                            error_message=f"{object_type} is not supported for {table_type}",
+                            details={
+                                "source_object": source_table,
+                                "target_object": target_table,
+                                "overwrite_comments": replication_config.overwrite_comments,
+                            },
+                            attempt_number=attempt,
+                            max_attempts=max_attempts,
+                        )
+                    ]
 
             end_time = datetime.now(timezone.utc)
             duration = (end_time - start_time).total_seconds()
@@ -1985,18 +2367,17 @@ class ReplicationProvider(BaseProvider):
         )
         return run_results
 
-    def _replicate_view(
+    def _uc_replicate_ddl(
         self,
         schema_name: str,
         table_config: TableConfig,
     ) -> List[RunResult]:
         """
-        Replicate a single view using create or replace.
+        Replicate a single object ddl.
 
         Args:
             schema_config: SchemaConfig object for the schema
             table_config: TableConfig object for the table to replicate
-
         Returns:
             RunResult object for the replication operation
         """
@@ -2007,52 +2388,82 @@ class ReplicationProvider(BaseProvider):
         target_catalog = self.catalog_config.catalog_name
         source_table = f"`{source_catalog}`.`{schema_name}`.`{table_name}`"
         target_table = f"`{target_catalog}`.`{schema_name}`.`{table_name}`"
-
-        step1_query = None
-        attempt = 1
         max_attempts = table_config.retry.max_attempts
-        retry = table_config.retry
+        object_type = "table"
+
+        # Use custom retry decorator with logging
+        @retry_with_logging(table_config.retry, self.logger)
+        def replication_operation(query: str):
+            self.logger.debug(
+                f"Executing replication query: {query}",
+                extra={"run_id": self.run_id, "operation": "replication"},
+            )
+            self.target_spark.sql(query)
+            return True
+
+        # Check if source table exists
+        if not self.spark.catalog.tableExists(source_table):
+            raise TableNotFoundError(f"Source table does not exist: {source_table}")
+        # Get source table type to determine replication strategy
+        source_table_type = self.db_ops.get_table_type(source_table)
 
         try:
-            # Check if source table exists
-            if not self.spark.catalog.tableExists(source_table):
-                raise TableNotFoundError(f"Source table does not exist: {source_table}")
-
-            # Get source table type to determine replication strategy
-            source_table_type = self.db_ops.get_table_type(source_table)
-            # Only replicate if it's a view
-            if source_table_type.upper() != "VIEW":
-                return []
-
             self.logger.info(
                 f"Starting replication: {source_table} -> {target_table}",
                 extra={"run_id": self.run_id, "operation": "replication"},
             )
-
-            view_stmt = self.source_dbops.show_create_table_ddl(source_table)
-
-            step1_query = view_stmt.replace(
-                view_stmt.split("(", maxsplit=1)[0],
-                f"CREATE OR REPLACE VIEW {target_table} ",
-            )
-
-            # Use custom retry decorator with logging
-            @retry_with_logging(retry, self.logger)
-            def replication_operation(query: str):
-                self.logger.debug(
-                    f"Executing replication query: {query}",
-                    extra={"run_id": self.run_id, "operation": "replication"},
+            # Only replicate if it's a view
+            if source_table_type.upper() == "VIEW":
+                object_type = "view"
+                result, last_exception, attempt, max_attempts, step1_query = (
+                    self._uc_replicate_view(
+                        source_table,
+                        target_table,
+                        max_attempts,
+                        replication_operation,
+                        replication_config,
+                    )
                 )
-                self.target_spark.sql(query)
-                return True
-
-            # Direct replication
-            (
-                result,
-                last_exception,
-                attempt,
-                max_attempts,
-            ) = replication_operation(step1_query)
+            elif source_table_type.upper() in ["MANAGED", "EXTERNAL"]:
+                object_type = "table"
+                result, last_exception, attempt, max_attempts, step1_query = (
+                    self._uc_replicate_table(
+                        source_table,
+                        target_table,
+                        max_attempts,
+                        source_table_type.upper(),
+                        replication_operation,
+                        replication_config,
+                    )
+                )
+            else:
+                self.logger.warning(
+                    f"Create DDL is not supported for {source_table_type} and are skipped for {source_table} -> {target_table}.",
+                    extra={"run_id": self.run_id, "operation": "uc_replication"},
+                )
+                end_time = datetime.now(timezone.utc)
+                duration = (end_time - start_time).total_seconds()
+                return [
+                    RunResult(
+                        operation_type="uc_replication",
+                        catalog_name=target_catalog,
+                        schema_name=schema_name,
+                        object_name=table_name,
+                        object_type=object_type,
+                        status="skipped",
+                        start_time=start_time.isoformat(),
+                        end_time=end_time.isoformat(),
+                        duration_seconds=duration,
+                        error_message=f"Create DDL is not supported for {source_table_type}",
+                        details={
+                            "target_table": target_table,
+                            "source_table": source_table,
+                            "table_type": source_table_type.lower(),
+                        },
+                        attempt_number=1,
+                        max_attempts=max_attempts,
+                    )
+                ]
 
             end_time = datetime.now(timezone.utc)
             duration = (end_time - start_time).total_seconds()
@@ -2070,7 +2481,7 @@ class ReplicationProvider(BaseProvider):
                         catalog_name=target_catalog,
                         schema_name=schema_name,
                         object_name=table_name,
-                        object_type="view",
+                        object_type=object_type,
                         status="success",
                         start_time=start_time.isoformat(),
                         end_time=end_time.isoformat(),
@@ -2078,7 +2489,7 @@ class ReplicationProvider(BaseProvider):
                         details={
                             "target_table": target_table,
                             "source_table": source_table,
-                            "table_type": source_table_type,
+                            "table_type": source_table_type.lower(),
                             "step1_query": step1_query,
                         },
                         attempt_number=attempt,
@@ -2104,7 +2515,7 @@ class ReplicationProvider(BaseProvider):
                     catalog_name=target_catalog,
                     schema_name=schema_name,
                     object_name=table_name,
-                    object_type="view",
+                    object_type=object_type,
                     status="failed",
                     start_time=start_time.isoformat(),
                     end_time=end_time.isoformat(),
@@ -2112,7 +2523,7 @@ class ReplicationProvider(BaseProvider):
                     details={
                         "target_table": target_table,
                         "source_table": source_table,
-                        "table_type": source_table_type,
+                        "table_type": source_table_type.lower(),
                         "step1_query": step1_query,
                     },
                     attempt_number=attempt,
@@ -2128,7 +2539,7 @@ class ReplicationProvider(BaseProvider):
             if not isinstance(e, ReplicationError):
                 e = ReplicationError(f"Replication operation failed: {str(e)}")
 
-            error_msg = f"Failed to replicate view {source_table}: {str(e)}"
+            error_msg = f"Failed to replicate {object_type} {source_table}: {str(e)}"
             self.logger.error(
                 error_msg,
                 extra={"run_id": self.run_id, "operation": "uc_replication"},
@@ -2140,7 +2551,7 @@ class ReplicationProvider(BaseProvider):
                     catalog_name=target_catalog,
                     schema_name=schema_name,
                     object_name=table_name,
-                    object_type="view",
+                    object_type=object_type,
                     status="failed",
                     start_time=start_time.isoformat(),
                     end_time=end_time.isoformat(),
@@ -2149,9 +2560,119 @@ class ReplicationProvider(BaseProvider):
                     details={
                         "target_table": target_table,
                         "source_table": source_table,
-                        "table_type": source_table_type,
                     },
                     attempt_number=attempt,
                     max_attempts=max_attempts,
                 )
             ]
+
+    def _uc_replicate_view(
+        self,
+        source_table: str,
+        target_table: str,
+        max_attempts: int,
+        replication_operation,
+        replication_config,
+    ) -> List[RunResult]:
+        """
+        Replicate a single view using create or replace.
+
+        Args:
+            source_table: Full source table name
+            target_table: Full target table name
+            max_attempts: Maximum number of retry attempts
+            replication_operation: Function to execute the replication operation
+
+        Returns:
+            Tuple containing:
+                - result: Boolean indicating success or failure
+                - last_exception: Last exception encountered, if any
+                - attempt: Number of attempts made
+                - max_attempts: Maximum number of attempts allowed
+                - step1_query: The query used for replication
+        """
+
+        step1_query = None
+        attempt = 1
+
+        view_stmt = self.source_dbops.show_create_table_ddl(source_table)
+
+        if replication_config.create_or_replace_view:
+            step1_query = view_stmt.replace(
+                view_stmt.split("(", maxsplit=1)[0],
+                f"CREATE OR REPLACE VIEW {target_table} ",
+            )
+        else:
+            step1_query = view_stmt.replace(
+                view_stmt.split("(", maxsplit=1)[0],
+                f"CREATE VIEW IF NOT EXISTS {target_table} ",
+            )
+
+        (
+            result,
+            last_exception,
+            attempt,
+            max_attempts,
+        ) = replication_operation(step1_query)
+
+        return result, last_exception, attempt, max_attempts, step1_query
+
+    def _uc_replicate_table(
+        self,
+        source_table: str,
+        target_table: str,
+        max_attempts: int,
+        table_type: str,
+        replication_operation,
+        replication_config,
+    ) -> List[RunResult]:
+        """
+        Replicate a single table using create or replace.
+
+        Args:
+            source_table: Full source table name
+            target_table: Full target table name
+            max_attempts: Maximum number of retry attempts
+            replication_operation: Function to execute the replication operation
+        Returns:
+            Tuple containing:
+                - result: Boolean indicating success or failure
+                - last_exception: Last exception encountered, if any
+                - attempt: Number of attempts made
+                - max_attempts: Maximum number of attempts allowed
+                - step1_query: The query used for replication
+        """
+
+        step1_query = None
+        attempt = 1
+        table_stmt = self.source_dbops.show_create_table_ddl(source_table)
+
+        if replication_config.create_or_replace_table:
+            step1_query = table_stmt.replace(
+                table_stmt.split("(", maxsplit=1)[0],
+                f"CREATE OR REPLACE TABLE {target_table} ",
+            )
+        else:
+            step1_query = table_stmt.replace(
+                table_stmt.split("(", maxsplit=1)[0],
+                f"CREATE TABLE IF NOT EXISTS {target_table} ",
+            )
+        if table_type == "EXTERNAL":
+            if replication_config.replicate_as_managed:
+                # Remove LOCATION clause from DDL
+                pattern = r"""\bLOCATION\s*(['"])[^'"]*\1"""
+
+                step1_query = re.sub(pattern, "", step1_query, flags=re.IGNORECASE)
+            else:
+                # Map external location if needed
+                step1_query = replace_cloud_url(
+                    step1_query, self.cloud_url_mapping, first_only=True
+                )
+        (
+            result,
+            last_exception,
+            attempt,
+            max_attempts,
+        ) = replication_operation(step1_query)
+
+        return result, last_exception, attempt, max_attempts, step1_query

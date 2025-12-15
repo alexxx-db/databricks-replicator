@@ -89,8 +89,57 @@ class ReconciliationProvider(BaseProvider):
             self.db_ops.create_schema_if_not_exists(
                 reconciliation_config.recon_outputs_catalog,
                 reconciliation_config.recon_outputs_schema,
-            )            
+            )
 
+        if reconciliation_config.recon_schema_check_table:
+            schema_comparison_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.{reconciliation_config.recon_schema_check_table}"
+            self.logger.info(
+                f"""Reconciliation schema check results will be stored in table: {schema_comparison_table}"""
+            )
+
+            # Create table if it doesn't exist
+            create_table_query = f"""
+            CREATE TABLE IF NOT EXISTS {schema_comparison_table} (
+                run_id STRING,
+                target_catalog STRING,
+                target_schema STRING,
+                target_table STRING,
+                source_catalog STRING,
+                source_schema STRING,
+                source_table STRING,
+                column_name STRING,
+                source_data_type STRING,
+                target_data_type STRING,
+                source_nullable STRING,
+                target_nullable STRING,
+                comparison_result STRING,
+                check_timestamp TIMESTAMP
+            ) USING DELTA
+            """
+            self.db_ops.execute_query(create_table_query)
+        if reconciliation_config.recon_missing_data_table:
+            missing_data_table = f"{reconciliation_config.recon_outputs_catalog}.{reconciliation_config.recon_outputs_schema}.{reconciliation_config.recon_missing_data_table}"
+            self.logger.info(
+                f"""Reconciliation missing data results will be stored in table: {missing_data_table}"""
+            )
+
+            # Create table if it doesn't exist
+            create_table_query = f"""
+            CREATE TABLE IF NOT EXISTS {missing_data_table} (
+                run_id STRING,
+                target_catalog STRING,
+                target_schema STRING,
+                target_table STRING,
+                source_catalog STRING,
+                source_schema STRING,
+                source_table STRING,
+                issue_type STRING,
+                data MAP<STRING, STRING>,
+                check_timestamp TIMESTAMP
+            ) USING DELTA
+            """
+
+            self.db_ops.execute_query(create_table_query)
         # Create source catalog from share if needed
         if reconciliation_config.create_shared_catalog:
             sharing_identifier = self.source_databricks_config.sharing_identifier
@@ -485,39 +534,6 @@ class ReconciliationProvider(BaseProvider):
                 exclude_list = "', '".join(exclude_columns)
                 exclude_filter = f"AND column_name NOT IN ('{exclude_list}')"
 
-            # Create table if it doesn't exist
-            create_table_query = f"""
-            CREATE TABLE IF NOT EXISTS {schema_comparison_table} (
-                run_id STRING,
-                target_catalog STRING,
-                target_schema STRING,
-                target_table STRING,
-                source_catalog STRING,
-                source_schema STRING,
-                source_table STRING,
-                column_name STRING,
-                source_data_type STRING,
-                target_data_type STRING,
-                source_nullable STRING,
-                target_nullable STRING,
-                comparison_result STRING,
-                check_timestamp TIMESTAMP
-            ) USING DELTA
-            """
-
-            result, last_exception, attempt, max_attempts = reconciliation_operation(
-                create_table_query
-            )
-
-            if not result:
-                return {
-                    "passed": False,
-                    "error": f"Failed to create schema comparison table: {last_exception}",
-                    "output_table": schema_comparison_table,
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
-                }
-
             # Insert only unmatched records
             schema_insert_query = f"""
             INSERT INTO {schema_comparison_table}
@@ -597,22 +613,23 @@ class ReconciliationProvider(BaseProvider):
                     "max_attempts": max_attempts,
                 }
 
+            mismatch_count = result.select('num_inserted_rows').collect()[0][0]
             # Check if there are any mismatches for this specific table
-            mismatch_count_df = self.spark.sql(
-                f"""
-                SELECT COUNT(*) as mismatch_count
-                FROM {schema_comparison_table}
-                WHERE run_id = '{self.run_id}'
-                  AND target_catalog = '{target_catalog}'
-                  AND target_schema = '{target_schema}'
-                  AND target_table = '{target_tbl}'
-                  AND source_catalog = '{source_catalog}'
-                  AND source_schema = '{source_schema}'
-                  AND source_table = '{source_tbl}'
-            """
-            )
+            # mismatch_count_df = self.spark.sql(
+            #     f"""
+            #     SELECT COUNT(*) as mismatch_count
+            #     FROM {schema_comparison_table}
+            #     WHERE run_id = '{self.run_id}'
+            #       AND target_catalog = '{target_catalog}'
+            #       AND target_schema = '{target_schema}'
+            #       AND target_table = '{target_tbl}'
+            #       AND source_catalog = '{source_catalog}'
+            #       AND source_schema = '{source_schema}'
+            #       AND source_table = '{source_tbl}'
+            # """
+            # )
 
-            mismatch_count = mismatch_count_df.collect()[0]["mismatch_count"]
+            # mismatch_count = mismatch_count_df.collect()[0]["mismatch_count"]
 
             if mismatch_count > 0:
                 self.logger.info(
@@ -746,35 +763,6 @@ class ReconciliationProvider(BaseProvider):
                     "passed": False,
                     "error": "No common fields found between source and target tables after exclusions",
                     "output_table": missing_data_table,
-                }
-
-            # Create table if it doesn't exist
-            create_table_query = f"""
-            CREATE TABLE IF NOT EXISTS {missing_data_table} (
-                run_id STRING,
-                target_catalog STRING,
-                target_schema STRING,
-                target_table STRING,
-                source_catalog STRING,
-                source_schema STRING,
-                source_table STRING,
-                issue_type STRING,
-                data MAP<STRING, STRING>,
-                check_timestamp TIMESTAMP
-            ) USING DELTA
-            """
-
-            result, last_exception, attempt, max_attempts = reconciliation_operation(
-                create_table_query
-            )
-
-            if not result:
-                return {
-                    "passed": False,
-                    "error": f"Failed to create missing data comparison table: {last_exception}",
-                    "output_table": missing_data_table,
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
                 }
 
             # Get filtered table references

@@ -7,7 +7,7 @@ replication_group: "readme_example_group"
 audit_config:
   # Mandatory: audit table full name
   audit_table: "data_replication.audit.logging"
-  # Mandatory: if logged at source or target. default to target
+  # Optional: if logged at source or target. default to target
   logging_workspace: "target"
   # Optional: whether to create audit catalog if it does not exist. default is false.
   create_audit_catalog: false
@@ -40,7 +40,7 @@ external_location_config:
 # when table_types is provided, data in tables of specified types will be replicated.
 # when volume_types is provided, files in volumes of specified types will be replicated.
 
-# Optional: replication group level uc object types. 
+# Optional: replication group level uc object types.
 uc_object_types: [
     "all",
     "storage_credential",
@@ -49,27 +49,29 @@ uc_object_types: [
     "catalog_tag",
     "schema",
     "schema_tag",
+    "table",
     "view",
+    "table_comment",
+    "table_tag",
     "volume",
     "volume_tag",
-    "table_tag",
     "column_tag",
     "column_comment",
-    # "table_comment"
     # "permission"
   ]
 
-# Optional: replication group level table types. 
+# Optional: replication group level table types.
 # supported types: all, streaming_table, managed, external.
 table_types: ["all", "managed", "streaming_table", "external"]
 
-# Optional: replication group level volume types. 
-# supported volume types: managed, external.
-# volume_types: ["all","managed", "external"]
+# Optional: replication group level volume types.
+# supported volume types: all, managed, external.
+volume_types: ["all", "managed", "external"]
 
-# Mandatory: At least one of backup_config, replication_config, reconciliation_config must be provided at catalog level or replication group level (lower priority).
+# Mandatory: At least one of backup_config, replication_config, reconciliation_config below must be provided at catalog level or replication group level (lower priority).
 
-# Optional: backup configuration (at replication group level)
+# Optional: replication group level backup configuration
+# Required if source delta share is to be created for replication
 backup_config:
   # Mandatory at replication group level or catalog level: whether to backup catalog.
   enabled: true
@@ -79,7 +81,7 @@ backup_config:
   create_recipient: false
   # Optional: recipient name. default to <target_databricks_connect_config.name>_recipient
   recipient_name: "aws_recipient"
-  # Optional: whether to create share on source.default is false.
+  # Optional: whether to create share from source_catalog at source. default is false.
   create_share: false
   # Optional: whether to add the schema to share. default is false.
   add_to_share: false
@@ -87,7 +89,7 @@ backup_config:
   share_name: "catalog_example_to_aws_share"
 
   # Streaming table specific configurations start here: ------------------------
-  # Optional: whether to create backup catalog on target. default is false.
+  # Optional: whether to create backup catalog for legacy dlt streaming tables at source. default is false.
   create_backup_catalog: false
   # Optional: backup catalog name. must not be set for non-streaming table replication.
   # default to __replication_internal_<catalog_name>_to_<target_databricks_connect_config.name>
@@ -96,20 +98,44 @@ backup_config:
   backup_catalog_location: null
   # Optional: prefix for backup schema names. default is None.
   backup_schema_prefix: null
+  # Optional: whether to create backup share at source. default is false.
+  create_backup_share: false
   # Optional: share name for streaming table backing table. default to <backup_catalog>_share
   backup_share_name: "__replication_internal_catalog_example_to_aws_share"
+  # Optional: whether to create dpm backing table share at source. default is false.
+  create_dpm_backing_table_share: false
+  # Optional: backing table share name for dpm dlt backing table. default to __replication_internal_dpm_<catalog_name>_to_<target_databricks_connect_config.name>_share
+  dpm_backing_table_share_name: "__replication_internal_dpm_catalog_example_to_aws_share"
   # streaming table specific configurations end here: ------------------------
 
-# Optional: replication configuration (at replication group level)
+# Optional: replication group level replication configuration
 replication_config:
   # Mandatory at replication group level or catalog level: whether to replicate catalog.
   enabled: true
+
+  # uc metadata specific configurations start here: ------------------------
+  # Optional: whether to replicate predictive optimization setting during UC catalog, schema and table replication.
+  # default is false to disable PO at target to enable consistent incremental deep clone. Setting to true will replicate PO settings from source to target.
+  replicate_enable_predictive_optimization: false
+  # Optional: whether to create or replace table during UC table replication. default is false to use create table if not exists.
+  create_or_replace_table: false
+  # Optional: whether to create or replace view during UC view replication. default is false to use create view if not exists.
+  create_or_replace_view: true
+  # Optional: whether to overwrite tags during replication. default is true.
+  overwrite_tags: true
+  # Optional: whether to overwrite comments during replication. default is true.
+  overwrite_comments: true
+  # uc metadata specific configurations end here: ------------------------
+  
+  # Data Replication specific configurations start here: ------------------------
   # Optional: whether to replicate the catalog if it does not exist on target.default is false.
   create_target_catalog: false
   # Optional: target catalog location. default is None.
   target_catalog_location: null
   # Optional: whether to create the shared catalog. default is false.
   create_shared_catalog: false
+  # Optional: share provider name. default is None.
+  provider_name: null
   # Optional: share name of source catalog. default to <catalog_name>_to_<target_databricks_connect_config.name>_share
   share_name: "catalog_example_to_aws_share"
   # Optional: catalog created from source share. default to <catalog_name>_from_<source_databricks_connect_config.name>_shared
@@ -123,44 +149,42 @@ replication_config:
   # Optional: whether to enforce schema during replication. default is true.
   enforce_schema: true
 
-  # uc metadata specific configurations start here: ------------------------
-  # Optional: whether to replicate predictive optimization setting during UC catalog, schema and table replication.
-  # default is false to disable PO at target to enable consistent incremental deep clone. Setting to true will replicate PO settings from source to target.
-  replicate_enable_predictive_optimization: false
-  # Optional: whether to overwrite tags during replication. default is true.
-  overwrite_tags: true
-  # Optional: whether to overwrite comments during replication. default is true.
-  overwrite_comments: true
-  # uc metadata specific configurations end here: ------------------------
-
   # Streaming table specific configurations start here: ------------------------
+  # Optional: whether to create backup shared catalog on target. default is false.
+  create_backup_shared_catalog: false
   # Optional: share name for streaming table backing table share. default to __replication_internal_<catalog_name>_to_<target_databricks_connect_config.name>_share
   backup_share_name: "__replication_internal_catalog_example_to_aws_share"
   # Optional: catalog created from backing table share. default to __replication_internal_<catalog_name>_from_<source_databricks_connect_config.name>_shared
   backup_catalog: "__replication_internal_catalog_example_from_azure_shared"
+  # Optional: whether to create dpm backing table shared catalog on target. default is false.
+  create_dpm_backing_table_shared_catalog: false  
+  # Optional: backing table share name for dpm dlt backing table. default to __replication_internal_dpm_<catalog_name>_to_<target_databricks_connect_config.name>_share
+  dpm_backing_table_share_name: "__replication_internal_dpm_catalog_example_to_aws_share"
+  # Optional: catalog created from dpm dlt backing table share. default to __replication_internal_dpm_<catalog_name>_from_<source_databricks_connect_config.name>_shared
+  dpm_backing_table_catalog: "__replication_internal_dpm_catalog_example_from_azure_shared"
   # Streaming table specific configurations end here: ------------------------
 
   # External table specific configurations start here: ------------------------
   # Optional: whether to replicate external tables as managed tables on target. default is false.
   replicate_as_managed: false
-  # Optional: whether to copy data during external table replication. default is true.
+  # Optional: whether to replicate data during external table replication. default is true.
   copy_files: true
   # External table specific configurations end here: ------------------------
 
   # Volume file specific configurations start here: ------------------------
   # Optional:  configuration for volume files replication
   volume_config:
-    # Optional: number of concurrent file copy tasks. default is 10.
+    # Optional: number of concurrent file copy tasks. default is 10. can be provided/overridden by args
     max_concurrent_copies: 10
-    # Optional: delete data and checkpoint on target before replication. default is false.
+    # Optional: delete data and checkpoint on target before replication. default is false. can be provided/overridden by args
     delete_and_reload: false
-    # Optional: whether to delete checkpoint before replication. default is false.
+    # Optional: whether to delete checkpoint before replication. default is false. can be provided/overridden by args
     delete_checkpoint: false
-    # Optional: folder path under volume to replicate. default is null to replicate the whole volume.
+    # Optional: folder path under volume to replicate. default is null to replicate the whole volume. can be provided/overridden by args
     folder_path: null
-    # Optional: autoloader options dictionary for streaming table replication
+    # Optional: autoloader options dictionary for streaming table replication using autoloader. can be provided/overridden by args
     autoloader_options: null
-    # Optional: streaming timeout in seconds for streaming table replication. default is 43200 seconds (12 hours).
+    # Optional: streaming timeout in seconds for streaming table replication. default is 43200 seconds (12 hours). can be provided/overridden by args
     streaming_timeout_seconds: 43200
     # Optional: whether to create detailed file ingestion logging catalog if it does not exist. default is false.
     create_file_ingestion_logging_catalog: false
@@ -173,8 +197,9 @@ replication_config:
     # Optional: detailed file ingestion logging outputs schema name. default to detail_file_ingestion_logging.
     file_ingestion_logging_table: "detail_file_ingestion_logging"
   # Volume file specific configurations end here: ------------------------
+  # Data Replication specific configurations end here: ------------------------
 
-# Optional: reconciliation configuration (at replication group level)
+# Optional: replication group level reconciliation configuration
 reconciliation_config:
   # Mandatory at replication group level or catalog level: whether to perform reconciliation.
   enabled: true
@@ -215,30 +240,94 @@ reconciliation_config:
   # Optional: number of sampling tables if sampling is enabled. default is 10.
   no_of_sampling_tables: 10
 
-# Optional: target catalog configurations list. can be overriden by args
+# Optional: Concurrency settings at replication group level
+concurrency:
+  # Optional: whether to process schemas in serial. default is false. all tables in the catalog will be processed in parallel when false. tables in schema will be processed in parallel but schemas will be processed one by one when true.
+  process_schemas_in_serial: false
+  # Optional: no of parallel threads for table and volume replication. default is 8. can be overriden by args
+  max_workers: 8
+  # Optional: no of parallel threads for table filtering in a schema. default is 8.
+  parallel_table_filter: 8
+  # Optional: timeout for each thread. default is 1800.
+  timeout_seconds: 1800
+
+# Optional: Retry settings at replication group level
+retry:
+  # Optional: maximum number of retry attempts on object replication operations. default is 3.
+  max_attempts: 3
+  # Optional: delay between retry attempts in seconds. default is 5.
+  retry_delay_seconds: 5
+
+# Optional: target catalog configurations list. can be provided by args
 target_catalogs:
   # Mandatory: target catalog name
   - catalog_name: "catalog_example"
-    # Optional catalog level: supported table types: all, streaming_table, managed, external.
+    # Optional: catalog group level uc object types. overrides replication group level.
+    uc_object_types:
+    # Optional: catalog level table types: supported table types: all, streaming_table, managed, external. overrides replication group level.
     table_types: ["all", "managed", "streaming_table", "external"]
-    # Optional catalog level: supported volume types: managed, external.
-    # Note: external volumes require cloud_url_mapping configuration above
-    # supported volume types: managed, external.
+    # Optional catalog level volume types: supported volume types: all, managed, external. overrides replication group level.
     volume_types: ["all", "managed", "external"]
-    # Optional: WHERE clause condition used to filter schemas and tables in all schemas from {catalog}.information_schema.tables. config target_schemas, exclude_schemas at the same time not allowed.
+    # Optional: backup configuration (at catalog level, overrides replication group level config)
+    backup_config:
+    # Optional: replication configuration (at catalog level, overrides replication group level config)
+    replication_config:
+    # Optional: reconciliation configuration (at catalog level, overrides replication group level config)
+    reconciliation_config:
+    # Optional: concurrency settings at catalog level (overrides replication group level config)
+    concurrency:
+    # Optional: retry settings at catalog level (overrides replication group level config)
+    retry:
+    # Optional: WHERE clause condition used to filter schemas and tables in all schemas from {catalog}.information_schema.tables. config target_schemas, exclude_schemas at the same time not allowed. can be provided by args
     schema_table_filter_expression: "table_name like 'fact_%' and table_schema like 'bronze_%'"
-    # Optional: target_schema list. can be overriden by args
+    # Optional: target_schema list. can be provided by args
     target_schemas:
       # Optional: target schema name list. if not provided, all schemas are included based on schema_table_filter_expression or all schemas in catalog.
       - schema_name: "bonze_1"
+        # Optional: schema level uc object types. overrides catalog level.
+        uc_object_types:
+        # Optional: schema level table types: supported table types: all, streaming_table, managed, external. overrides catalog level.
+        table_types: ["all", "managed", "streaming_table", "external"]
+        # Optional: schema level volume types: supported volume types: all, managed, external. overrides catalog level.
+        volume_types: ["all", "managed", "external"]
+        # Optional: backup configuration (at schema level, overrides catalog level config)
+        backup_config:
+        # Optional: replication configuration (at schema level, overrides catalog level config)
+        replication_config:
+        # Optional: reconciliation configuration (at schema level, overrides catalog   level config)
+        reconciliation_config:
+        # Optional: concurrency settings at schema level (overrides catalog level config)
+        concurrency:
+        # Optional: retry settings at schema level (overrides catalog level config)
+        retry:
       - schema_name: "bonze_2"
-        # Optional: include specific tables in the schema. if not provided, all tables are included. can be overriden by args
+        # Optional: include specific tables in the schema. if not provided, all tables are included. can be provided by args
         tables:
           - table_name: "product_metrics"
+            # Optional: backup configuration (at table level, overrides schema level config)
+            backup_config:
+            # Optional: replication configuration (at table level, overrides schema level config)
+            replication_config:
+            # Optional: reconciliation configuration (at table level, overrides schema level config)
+            reconciliation_config:
+            # Optional: concurrency settings at table level (overrides schema level config)
+            concurrency:
+            # Optional: retry settings at table level (overrides schema level config)
+            retry:
           - table_name: "sales_data"
-        # Optional: include specific volumes in the schema. if not provided, all volumes are included.
+        # Optional: include specific volumes in the schema. if not provided, all volumes are included. can be provided by args
         volumes:
           - volume_name: "data_volume"
+            # Optional: backup configuration (at volume level, overrides schema level config)
+            backup_config:
+            # Optional: replication configuration (at volume level, overrides schema level config)
+            replication_config:
+            # Optional: reconciliation configuration (at volume level, overrides schema level config)
+            reconciliation_config:
+            # Optional: concurrency settings at volume level (overrides schema level config)
+            concurrency:
+            # Optional: retry settings at volume level (overrides schema level config)
+            retry:
           - volume_name: "temp_volume"
       - schema_name: "bonze_3"
         # Optional: exclude specific tables in the schema. if not provided, all tables are included.
@@ -247,46 +336,15 @@ target_catalogs:
         # Optional: exclude specific volumes in the schema. if not provided, all volumes are included.
         exclude_volumes:
           - volume_name: "old_volume"
-      - schema_name: "bonze_4"
-      # Optional: WHERE clause condition to select specific tables from {catalog}.{schema}
-        # config table_filter_expression and tables at the same time not allowed.
-        table_filter_expression: "table_name like 'fact_%' or table_name like 'dim_%'"
     # Optional: exclude_schema list.
     exclude_schemas:
       # Optional: exclude specific schemas in the catalog.
       - schema_name: "bonze_exclude_1"
       - schema_name: "bonze_exclude_2"
-    # Optional: backup configuration (at catalog level, overrides replication group level config)
-    backup_config:
-    # check config at replication group level
-    # Optional: replication configuration (at catalog level, overrides replication group level config)
-    replication_config:
-    # check config at replication group level
-    # Optional: reconciliation configuration (at catalog level, overrides replication group level config)
-    reconciliation_config:
-    # check config at replication group level
-
-# Optional: Concurrency settings at replication group level
-concurrency:
-  # Optional: whether to process schemas in serial. default is false. all tables in the catalog will be processed in parallel if set to false.
-  process_schemas_in_serial: false
-  # Optional: no of parallel threads for table and volume replication. default is 8.
-  max_workers: 8
-  # Optional: no of parallel threads for table filtering in a schema. default is 8.
-  parallel_table_filter: 8
-  # Optional: timeout for each task. default is 3600.
-  timeout_seconds: 1800
-
-# Optional: Retry settings at replication group level
-retry:
-  # Optional: maximum number of retry attempts on object cloning operations. default is 3.
-  max_attempts: 3
-  # Optional: delay between retry attempts in seconds. default is 5.
-  retry_delay_seconds: 5
 
 # Optional: Logging settings
 logging:
-  # Optional: logging level. default is "INFO".
+  # Optional: logging level. default is "INFO". can be overriden by args
   # Supported levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: "INFO"
   # Optional: log format. default is "json".
