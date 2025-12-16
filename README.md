@@ -34,6 +34,7 @@ This system provides incremental data and UC metadata replication capabilities b
 ### Unsupported Object Types
 - Databricks Workspace Assets is not yet supported, but maybe considered in future roadmap
 - Streaming checkpoints are not replicated. Streaming state handling should be managed outside this solution.
+- Hive metastore
 
 ## Supported Operation Types
 ### Backup Operations
@@ -46,7 +47,7 @@ This system provides incremental data and UC metadata replication capabilities b
 - (Optional if managed by Terraform) Create shared catalog from shares
 - Deep clone tables across workspaces from shared catalog with schema enforcement
 - For DLT streaming table, it defaults to replicata from dmp_backing_table share and fallback to backup share
-- Incremental copy volume files across workspaces from shared catalog using autoloader
+- Incremental copy volume files across workspaces from shared catalog using autoloader + file copy
 
 ### Metadata Replication Operations
 - Replicate UC metadata from source uc to target uc using Databricks Connect and Databricks SDK
