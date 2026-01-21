@@ -240,11 +240,21 @@ class ReplicationProvider(BaseProvider):
             results.extend(result)
 
         if self.catalog_config.uc_object_types:
+            table_name = table_config.table_name
+            replication_config = table_config.replication_config
+            source_catalog = replication_config.source_catalog
+            source_table = f"`{source_catalog}`.`{schema_name}`.`{table_name}`"
+
+            # Check if source table exists
+            if not self.spark.catalog.tableExists(source_table):
+                raise TableNotFoundError(f"Source table does not exist: {source_table}")
+            # Get source table type to determine replication strategy
+            source_table_type = self.db_ops.get_table_type(source_table)
             if (
                 UCObjectType.TABLE in self.catalog_config.uc_object_types
                 or UCObjectType.VIEW in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
-            ):
+            ) and source_table_type.upper() in ["MANAGED", "EXTERNAL", "VIEW"]:
                 result = self._uc_replicate_ddl(
                     schema_name,
                     table_config,
@@ -254,7 +264,7 @@ class ReplicationProvider(BaseProvider):
                 UCObjectType.MATERIALIZED_VIEW in self.catalog_config.uc_object_types
                 or UCObjectType.STREAMING_TABLE in self.catalog_config.uc_object_types
                 or UCObjectType.ALL in self.catalog_config.uc_object_types
-            ):
+            ) and source_table_type.upper() in ["STREAMING_TABLE", "MATERIALIZED_VIEW"]:
                 result = self._uc_replicate_sql_st_mv(
                     schema_name,
                     table_config,
@@ -383,7 +393,7 @@ class ReplicationProvider(BaseProvider):
 
             # Get source table type to determine replication strategy
             source_table_type = self.db_ops.get_table_type(source_table)
-            if source_table_type.upper() == TableType.STREAMING_TABLE.upper():
+            if source_table_type.upper() == 'STREAMING_TABLE':
                 table_exists = False
                 # For streaming tables, check if DPM backing table catalog is specified and use it as source if the table exists there
                 if replication_config.dpm_backing_table_catalog:

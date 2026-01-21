@@ -59,7 +59,7 @@ environments:
       # Optional: Target Standard cluster ID used for target spark session. default is null to use serverless endpoint.
       cluster_id: null
       # Optional: Target Databricks SQL warehouse ID used for creating sql materialized views. default is null.
-      warehouse_id: 6429d1b1499e3fac
+      # warehouse_id: 6429d1b1499e3fac
       # Optional: Target Databricks SQL warehouse config used for creating sql materialized views.
       warehouse_config:
         # Optional: whether to create the warehouse if not exists. default is true to reuse existing warehouse with same name
