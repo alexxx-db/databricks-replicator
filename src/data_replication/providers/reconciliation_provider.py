@@ -636,7 +636,7 @@ class ReconciliationProvider(BaseProvider):
 
             if mismatch_count > 0:
                 self.logger.info(
-                    f"{mismatch_count} schema mismatches found for {source_table} vs {target_table}",
+                    f"{mismatch_count} schema mismatches found for {source_table} vs {target_table} "
                     f"mismatches are recorded in {schema_comparison_table}",
                     extra={"run_id": self.run_id, "operation": "reconciliation"},
                 )
@@ -877,7 +877,7 @@ class ReconciliationProvider(BaseProvider):
 
             if total_missing > 0:
                 self.logger.info(
-                    f"{total_missing} mismatches found for {source_table} vs {target_table}",
+                    f"{total_missing} mismatches found for {source_table} vs {target_table} "
                     f"mismatches are recorded in {missing_data_table}",
                     extra={"run_id": self.run_id, "operation": "reconciliation"},
                 )
