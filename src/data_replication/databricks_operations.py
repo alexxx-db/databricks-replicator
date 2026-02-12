@@ -286,7 +286,6 @@ class DatabricksOperations:
             # If parallel processing is not desired or only one table, process sequentially
             for table_name in table_names:
                 table_name, is_included = check_table_type(table_name)
-                print(f"table: {table_name}, included: {is_included}")
                 if is_included:
                     filtered_tables.append(table_name)
             return filtered_tables
