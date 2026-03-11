@@ -454,6 +454,7 @@ class ReplicationProvider(BaseProvider):
                     raise TableNotFoundError(msg) from exc
                 dlt_flag = False
                 pipeline_id = None
+                parent_table_id = None
                 actual_target_table = target_table
 
             if self.spark.catalog.tableExists(actual_target_table):
